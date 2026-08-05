@@ -110,6 +110,7 @@ function openSetup(m) {
   if (m === 'ai') {
     $('setup-title').textContent = 'Play vs Computer';
     let bots = 1;
+    let level = localStorage.getItem('ringoDiff') || 'normal';
     body.innerHTML = `<div class="field">
         <label>${colorDot(0)}Your name</label>
         <input type="text" id="ai-name" maxlength="14" placeholder="You" value="${savedName()}">
@@ -119,13 +120,20 @@ function openSetup(m) {
     f.innerHTML = '<label>How many computer players?</label>';
     f.appendChild(segButtons([1, 2, 3, 4], 1, (v) => { bots = v; }));
     body.appendChild(f);
+    const fd = document.createElement('div');
+    fd.className = 'field';
+    fd.innerHTML = '<label>How tough should they be?</label>';
+    const cap = (s) => s[0].toUpperCase() + s.slice(1);
+    fd.appendChild(segButtons(['Easy', 'Normal', 'Hard'], cap(level), (v) => { level = v.toLowerCase(); }));
+    body.appendChild(fd);
 
     $('btn-setup-go').onclick = () => {
       const you = $('ai-name').value.trim() || 'You';
       localStorage.setItem('ringoName', you);
+      localStorage.setItem('ringoDiff', level);
       const botNames = ['Chip', 'Sparky', 'Gizmo', 'Bolt'];
       const players = [{ name: you }];
-      for (let i = 0; i < bots; i++) players.push({ name: botNames[i], isBot: true });
+      for (let i = 0; i < bots; i++) players.push({ name: botNames[i], isBot: true, level });
       startLocalGame(players);
     };
   }
@@ -431,14 +439,14 @@ function maybeBotAct() {
   } else if (state.phase === 'place') {
     setTimeout(() => {
       if (state.phase === 'place' && state.players[state.current].isBot) {
-        const cell = chooseCell(state);
+        const cell = chooseCell(state, state.players[state.current].level);
         if (cell) doLocalPlace(cell[0], cell[1]);
       }
     }, 1000);
   } else if (state.phase === 'blocked') {
     setTimeout(() => {
       if (state.phase !== 'blocked' || !state.players[state.current].isBot) return;
-      const cell = chooseSteal(state);
+      const cell = chooseSteal(state, state.players[state.current].level);
       if (cell) doLocalPlace(cell[0], cell[1]);
       else doLocalRoll();
     }, 1100);
@@ -696,6 +704,17 @@ function handleServer(msg) {
           x.addEventListener('click', () => { sfx.click(); send({ type: 'removebot', i }); });
           li.appendChild(x);
         }
+        if (p.isBot) {
+          const lvl = document.createElement('span');
+          lvl.className = 'bot-level';
+          lvl.textContent = p.level || 'normal';
+          if (net.isHost) {
+            lvl.classList.add('editable-level');
+            lvl.title = 'Tap to change difficulty';
+            lvl.addEventListener('click', () => { sfx.click(); send({ type: 'botlevel', i }); });
+          }
+          li.appendChild(lvl);
+        }
         if (i === msg.you) {
           li.classList.add('editable');
           li.title = 'Tap to rename';
@@ -816,7 +835,11 @@ function handleServer(msg) {
 
 $('btn-lobby-start').addEventListener('click', () => { sfx.click(); send({ type: 'start' }); });
 $('btn-lobby-leave').addEventListener('click', () => { sfx.click(); quitToMenu(); });
-$('btn-lobby-addbot').addEventListener('click', () => { sfx.click(); send({ type: 'addbot' }); });
+$('btn-lobby-addbot').addEventListener('click', () => {
+  sfx.click();
+  // Default new bots to the difficulty last used vs the computer.
+  send({ type: 'addbot', level: localStorage.getItem('ringoDiff') || 'normal' });
+});
 
 // One tap to text the room to the family: native share sheet where the
 // browser has one (phones), clipboard everywhere else.

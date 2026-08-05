@@ -197,7 +197,7 @@ async function broadcastLobby(room) {
     you: i,
     host: room.host,
     token: p.token, // secret; lets this player rejoin later
-    players: room.players.map((q) => ({ name: q.name, away: !!q.disconnected })),
+    players: room.players.map((q) => ({ name: q.name, away: !!q.disconnected, isBot: !!q.isBot, level: q.level })),
   })));
 }
 
@@ -213,6 +213,9 @@ function cleanName(raw) {
 // ---------- bots ----------
 
 const BOT_NAMES = ['Chip', 'Sparky', 'Gizmo', 'Bolt'];
+const BOT_LEVELS = ['easy', 'normal', 'hard'];
+
+const cleanLevel = (l) => (BOT_LEVELS.includes(l) ? l : 'normal');
 
 const REACTIONS = ['🎉', '😂', '😱', '😈', '💪', '❤️'];
 
@@ -239,7 +242,7 @@ async function runBots(code) {
       if (!bot?.isBot) return false;
       const st = r.state;
       if (st.phase === 'place' || st.phase === 'blocked') {
-        const cell = st.phase === 'place' ? chooseCell(st) : chooseSteal(st);
+        const cell = st.phase === 'place' ? chooseCell(st, bot.level) : chooseSteal(st, bot.level);
         if (cell) {
           const { result, stolen } = applyPlace(st, cell[0], cell[1]);
           event = { kind: result === 'next' ? 'place' : result, cell, stolen, by: bot.name };
@@ -435,7 +438,21 @@ async function onMessage(connId, msg, ip) {
         if (r.players.length >= MAX_ROOM_PLAYERS) return false;
         const name = BOT_NAMES.find((n) => !r.players.some((p) => p.name === n));
         if (!name) return false;
-        r.players.push({ name, isBot: true, connectionId: null, disconnected: false });
+        r.players.push({ name, isBot: true, connectionId: null, disconnected: false, level: cleanLevel(msg.level) });
+        return true;
+      });
+      if (room && out === true) await broadcastLobby(room);
+      return;
+    }
+
+    // Host cycles a bot's difficulty: easy → normal → hard → easy.
+    case 'botlevel': {
+      const bi = Number(msg.i);
+      const { room, out } = await mutateRoom(conn.code, (r) => {
+        if (r.started || idx !== r.host) return false;
+        const p = r.players[bi];
+        if (!p?.isBot) return false;
+        p.level = BOT_LEVELS[(BOT_LEVELS.indexOf(cleanLevel(p.level)) + 1) % BOT_LEVELS.length];
         return true;
       });
       if (room && out === true) await broadcastLobby(room);

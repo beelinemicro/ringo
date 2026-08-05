@@ -160,7 +160,7 @@ function broadcastLobby(room) {
       you: i,
       host: room.host,
       token: room.players[i].token, // secret; lets this player rejoin later
-      players: room.players.map((p) => ({ name: p.name, away: !!p.disconnected, isBot: !!p.isBot })),
+      players: room.players.map((p) => ({ name: p.name, away: !!p.disconnected, isBot: !!p.isBot, level: p.level })),
     });
   });
 }
@@ -176,6 +176,9 @@ function cleanName(raw) {
 // ---------- bots ----------
 
 const BOT_NAMES = ['Chip', 'Sparky', 'Gizmo', 'Bolt'];
+const BOT_LEVELS = ['easy', 'normal', 'hard'];
+
+const cleanLevel = (l) => (BOT_LEVELS.includes(l) ? l : 'normal');
 
 const REACTIONS = ['🎉', '😂', '😱', '😈', '💪', '❤️'];
 
@@ -196,8 +199,8 @@ async function runBots(room) {
       if (!rooms.has(room.code) || !room.started || st !== room.state || st.phase === 'over') return;
 
       let cell = null;
-      if (st.phase === 'place') cell = chooseCell(st);
-      else if (st.phase === 'blocked') cell = chooseSteal(st);
+      if (st.phase === 'place') cell = chooseCell(st, bot.level);
+      else if (st.phase === 'blocked') cell = chooseSteal(st, bot.level);
 
       let event;
       if (cell) {
@@ -321,8 +324,18 @@ function handleMessage(ws, msg) {
       if (room.players.length >= 5) return;
       const name = BOT_NAMES.find((n) => !room.players.some((p) => p.name === n));
       if (!name) return;
-      room.players.push({ name, isBot: true });
+      room.players.push({ name, isBot: true, level: cleanLevel(msg.level) });
       room.sockets.push(null);
+      broadcastLobby(room);
+      break;
+    }
+
+    // Host cycles a bot's difficulty: easy → normal → hard → easy.
+    case 'botlevel': {
+      if (!room || room.started || ws.playerIdx !== room.host) return;
+      const p = room.players[Number(msg.i)];
+      if (!p?.isBot) return;
+      p.level = BOT_LEVELS[(BOT_LEVELS.indexOf(cleanLevel(p.level)) + 1) % BOT_LEVELS.length];
       broadcastLobby(room);
       break;
     }
