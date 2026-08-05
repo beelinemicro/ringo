@@ -90,6 +90,11 @@ export const sfx = {
     tone({ freq: 520, dur: 0.1, type: 'triangle', gain: 0.14, when: 0.16 });
     tone({ freq: 780, dur: 0.12, type: 'triangle', gain: 0.12, when: 0.21 });
   },
+  // A little cartoon "boing" when an emoji reaction lands.
+  react() {
+    tone({ freq: 440, dur: 0.12, type: 'triangle', gain: 0.1, glideTo: 880 });
+    tone({ freq: 1320, dur: 0.08, type: 'sine', gain: 0.06, when: 0.1 });
+  },
   yourTurn() {
     tone({ freq: 660, dur: 0.1, type: 'sine', gain: 0.08 });
     tone({ freq: 990, dur: 0.12, type: 'sine', gain: 0.08, when: 0.09 });

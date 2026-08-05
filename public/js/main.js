@@ -162,6 +162,8 @@ $('btn-setup-back').addEventListener('click', () => { sfx.click(); show('screen-
 // ---------- board construction ----------
 
 function buildBoard() {
+  // Reactions only make sense with people on other screens.
+  $('react-bar').classList.toggle('hidden', mode !== 'online');
   const board = $('board');
   board.innerHTML = '';
   cellEls.length = 0;
@@ -632,6 +634,10 @@ $('update-banner').addEventListener('click', () => {
 function handleServer(msg) {
   checkVersion(msg.v);
   switch (msg.type) {
+    case 'react':
+      spawnReaction(msg.e, msg.by);
+      break;
+
     case 'error':
       onlineStatus(msg.message);
       $('lobby-status').textContent = msg.message;
@@ -830,6 +836,48 @@ $('btn-lobby-share').addEventListener('click', async () => {
   }
 });
 
+// ---------- emoji reactions ----------
+
+// Tap an emoji, everyone in the room sees it fly. The server checks the
+// allowlist and stamps the sender's name.
+const REACTIONS = ['🎉', '😂', '😱', '😈', '💪', '❤️'];
+
+let lastReactAt = 0;
+
+(function buildReactBar() {
+  const bar = $('react-bar');
+  REACTIONS.forEach((e) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = e;
+    b.addEventListener('click', () => {
+      const now = Date.now();
+      if (now - lastReactAt < 1000) return; // one per second is plenty epic
+      lastReactAt = now;
+      sfx.click();
+      send({ type: 'react', e });
+    });
+    bar.appendChild(b);
+  });
+})();
+
+function spawnReaction(emoji, by) {
+  sfx.react();
+  const el = document.createElement('div');
+  el.className = 'react-fly';
+  el.style.left = `${10 + Math.random() * 75}%`;
+  el.style.setProperty('--rot', `${(Math.random() * 36 - 18).toFixed(0)}deg`);
+  const big = document.createElement('span');
+  big.className = 'react-emoji';
+  big.textContent = emoji;
+  const name = document.createElement('span');
+  name.className = 'react-name';
+  name.textContent = by;
+  el.append(big, name);
+  $('react-layer').appendChild(el);
+  setTimeout(() => el.remove(), 2600);
+}
+
 // ---------- hall of fame ----------
 
 // Online wins/losses per family member, kept by the server and pushed to
@@ -929,6 +977,12 @@ function startPresence() {
 }
 
 // ---------- boot ----------
+
+// Installable app + offline local play. Registration failing (old browser,
+// file:// open) just means no install button — the site works regardless.
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('sw.js').catch(() => {});
+}
 
 show('screen-menu');
 startPresence();

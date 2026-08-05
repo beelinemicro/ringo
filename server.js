@@ -177,6 +177,8 @@ function cleanName(raw) {
 
 const BOT_NAMES = ['Chip', 'Sparky', 'Gizmo', 'Bolt'];
 
+const REACTIONS = ['🎉', '😂', '😱', '😈', '💪', '❤️'];
+
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Plays out consecutive bot turns, broadcasting each roll and placement so
@@ -410,6 +412,18 @@ function handleMessage(ws, msg) {
       broadcastState(room, { kind: result === 'next' ? 'place' : result, cell: [r, c], stolen, by });
       if (result === 'win') recordResult(room);
       else runBots(room);
+      break;
+    }
+
+    // Emoji reaction — validated against the allowlist, stamped with the
+    // sender's name, shown big on every screen in the room.
+    case 'react': {
+      if (!room?.started) return;
+      if (!REACTIONS.includes(msg.e)) return;
+      const now = Date.now();
+      if (ws.lastReact && now - ws.lastReact < 900) return; // spam brake
+      ws.lastReact = now;
+      broadcast(room, { type: 'react', v: GAME_VERSION, e: msg.e, by: room.players[ws.playerIdx].name });
       break;
     }
 

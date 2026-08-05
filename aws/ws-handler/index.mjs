@@ -214,6 +214,8 @@ function cleanName(raw) {
 
 const BOT_NAMES = ['Chip', 'Sparky', 'Gizmo', 'Bolt'];
 
+const REACTIONS = ['🎉', '😂', '😱', '😈', '💪', '❤️'];
+
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Plays out consecutive bot turns, broadcasting each roll and placement so
@@ -547,6 +549,19 @@ async function onMessage(connId, msg, ip) {
         if (event.kind === 'win') await recordResult(room);
         else await runBots(conn.code);
       }
+      return;
+    }
+
+    // Emoji reaction — validated against the allowlist, stamped with the
+    // sender's name, shown big on every screen in the room.
+    case 'react': {
+      if (!REACTIONS.includes(msg.e)) return;
+      const room = await getRoom(conn.code);
+      if (!room?.started) return;
+      const by = room.players[idx]?.name;
+      if (!by) return;
+      await Promise.all(room.players.map((p) =>
+        sendTo(p.connectionId, { type: 'react', v: GAME_VERSION, e: msg.e, by })));
       return;
     }
 

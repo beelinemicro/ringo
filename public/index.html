@@ -4,6 +4,13 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>RINGO — The Family Board Game</title>
+  <meta name="theme-color" content="#1d5c3a" />
+  <link rel="manifest" href="manifest.json" />
+  <link rel="icon" href="icons/favicon.png" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="RINGO" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&display=swap" rel="stylesheet" />
@@ -84,8 +91,10 @@
           </div>
           <button class="btn btn-primary btn-roll" id="btn-roll">Roll!</button>
           <div id="message" class="message" aria-live="polite"></div>
+          <div id="react-bar" class="react-bar hidden" aria-label="Send a reaction"></div>
         </div>
       </div>
+      <div id="react-layer" aria-hidden="true"></div>
 
       <div id="banner" class="banner hidden">
         <div class="banner-card">

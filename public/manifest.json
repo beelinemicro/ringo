@@ -1,0 +1,16 @@
+{
+  "name": "RINGO — The Family Board Game",
+  "short_name": "RINGO",
+  "description": "Dad's board game: five rings in a row — or all four corners. Shout it loud!",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#14432a",
+  "theme_color": "#1d5c3a",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
