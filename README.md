@@ -1,5 +1,7 @@
 # RINGO 🔴🟡🔵🟢
 
+[![tests](https://github.com/beelinemicro/ringo/actions/workflows/test.yml/badge.svg)](https://github.com/beelinemicro/ringo/actions/workflows/test.yml)
+
 *The family board game, invented by Dad — now playable online.*
 
 **Play it now: https://ringo.beelinemicrosystems.com** — create a room, share
@@ -111,6 +113,11 @@ One DynamoDB table, keyed on `pk`:
 The Lambda's role (`ringo-ws-role`, inline policy `ringo-ws-access`) needs
 `dynamodb:GetItem/PutItem/DeleteItem/UpdateItem/Scan` on the table plus
 `execute-api:ManageConnections`.
+
+**Monitoring**: CloudWatch alarm `ringo-ws-errors` (us-east-2) fires when the
+Lambda reports any error in a 5-minute window and emails via SNS topic
+`ringo-alerts`. Tests run in GitHub Actions on every push
+(`.github/workflows/test.yml`).
 
 Deploying changes:
 
