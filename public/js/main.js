@@ -482,6 +482,7 @@ $('btn-banner-menu').addEventListener('click', () => { sfx.click(); quitToMenu()
 $('btn-quit').addEventListener('click', () => { sfx.click(); quitToMenu(); });
 
 function quitToMenu() {
+  send({ type: 'leave' }); // frees a lobby seat for real (vs. a phone blip)
   if (net) { clearInterval(net.keepalive); net.ws.onclose = null; net.ws.close(); net = null; }
   clearSeat(); // leaving on purpose — don't auto-rejoin this game later
   rejoinAttempts = 0;
@@ -527,16 +528,32 @@ function clearSeat() {
 
 let rejoinAttempts = 0;
 
-// Retry a dropped mid-game connection a few times before giving up.
-// Returns false when there's no seat to reclaim or we're out of tries.
+// Retry a dropped connection a few times before giving up. Returns false
+// when there's no seat to reclaim or we're out of tries.
 function scheduleRejoin() {
   const seat = savedSeat();
   if (!seat || rejoinAttempts >= 5) return false;
   rejoinAttempts++;
-  setTimeout(() => connectGame({ type: 'rejoin', code: seat.code, token: seat.token }),
-    rejoinAttempts === 1 ? 300 : 2500);
+  setTimeout(() => {
+    if (!net) connectGame({ type: 'rejoin', code: seat.code, token: seat.token });
+  }, rejoinAttempts === 1 ? 300 : 2500);
   return true;
 }
+
+// Phones kill the socket the instant the browser is backgrounded (switching
+// to Messages to paste an invite link, locking the screen). The moment we're
+// foregrounded again, sit straight back down.
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden || net) return;
+  const seat = savedSeat();
+  if (!seat) return;
+  const inGame = mode === 'online' && state && state.phase !== 'over';
+  const inLobby = !$('screen-lobby').classList.contains('hidden');
+  if (inGame || inLobby) {
+    rejoinAttempts = 1; // fresh round of retries
+    connectGame({ type: 'rejoin', code: seat.code, token: seat.token });
+  }
+});
 
 function connectGame(firstMsg) {
   // A deployed copy sets window.RINGO_WS_URL in config.js; local dev uses
@@ -561,14 +578,16 @@ function connectGame(firstMsg) {
     clearInterval(keepalive);
     net = null;
     const inGame = mode === 'online' && state && state.phase !== 'over';
-    if (inGame && scheduleRejoin()) {
-      setMessage('Connection lost — reconnecting…');
+    const inLobby = !$('screen-lobby').classList.contains('hidden');
+    if ((inGame || inLobby) && scheduleRejoin()) {
+      if (inGame) setMessage('Connection lost — reconnecting…');
+      else $('lobby-status').textContent = 'Connection lost — reconnecting…';
       return;
     }
     if (inGame) {
       showBanner('OOPS', 'Connection lost. Head back to the menu.', null);
       $('btn-banner-again').classList.add('hidden');
-    } else if (!$('screen-lobby').classList.contains('hidden')) {
+    } else if (inLobby) {
       show('screen-menu');
     }
   };
@@ -636,15 +655,19 @@ function handleServer(msg) {
     case 'rejoin-failed': {
       clearSeat();
       const wasInGame = mode === 'online' && state && state.phase !== 'over';
+      const wasInLobby = !$('screen-lobby').classList.contains('hidden');
       if (net) { net.ws.onclose = null; net.ws.close(); clearInterval(net.keepalive); net = null; }
       if (wasInGame) {
         showBanner('OOPS', 'Connection lost. Head back to the menu.', null);
         $('btn-banner-again').classList.add('hidden');
+      } else if (wasInLobby) {
+        show('screen-menu');
       }
       break;
     }
 
     case 'lobby': {
+      mode = 'online'; // may be arriving via a lobby rejoin after a reload
       net.code = msg.code;
       net.myIndex = msg.you;
       net.isHost = msg.you === msg.host;
@@ -655,7 +678,8 @@ function handleServer(msg) {
       list.innerHTML = '';
       msg.players.forEach((p, i) => {
         const li = document.createElement('li');
-        li.innerHTML = `${colorDot(i)}${p.name}${i === msg.host ? ' 👑' : ''}${i === msg.you ? ' (you)' : ''}`;
+        li.innerHTML = `${colorDot(i)}${p.name}${p.away ? ' 💤' : ''}${i === msg.host ? ' 👑' : ''}${i === msg.you ? ' (you)' : ''}`;
+        if (p.away) li.classList.add('away');
         if (i === msg.you) {
           li.classList.add('editable');
           li.title = 'Tap to rename';
@@ -672,10 +696,11 @@ function handleServer(msg) {
         }
         list.appendChild(li);
       });
+      const here = msg.players.filter((p) => !p.away).length;
       $('btn-lobby-start').classList.toggle('hidden', !net.isHost);
-      $('btn-lobby-start').disabled = msg.players.length < 2;
+      $('btn-lobby-start').disabled = here < 2;
       $('lobby-status').textContent = net.isHost
-        ? (msg.players.length < 2 ? 'Waiting for at least one more player…' : 'Ready when you are!')
+        ? (here < 2 ? 'Waiting for at least one more player…' : 'Ready when you are!')
         : 'Waiting for the host to start the game…';
       show('screen-lobby');
       break;

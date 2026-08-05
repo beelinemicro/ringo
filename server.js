@@ -123,7 +123,7 @@ function broadcastLobby(room) {
       you: i,
       host: room.host,
       token: room.players[i].token, // secret; lets this player rejoin later
-      players: room.players.map((p) => ({ name: p.name })),
+      players: room.players.map((p) => ({ name: p.name, away: !!p.disconnected })),
     });
   });
 }
@@ -214,7 +214,7 @@ function handleMessage(ws, msg) {
       const r = rooms.get(String(msg.code || '').toUpperCase());
       const token = String(msg.token || '');
       const idx = r && token ? r.players.findIndex((p) => p.token === token) : -1;
-      if (!r || !r.started || idx === -1) {
+      if (!r || idx === -1) {
         return sendTo(ws, { type: 'rejoin-failed', v: GAME_VERSION });
       }
       const old = r.sockets[idx];
@@ -223,6 +223,7 @@ function handleMessage(ws, msg) {
       ws.roomCode = r.code;
       ws.playerIdx = idx;
       r.players[idx].disconnected = false;
+      if (!r.started) { broadcastLobby(r); break; } // back in the lobby
       r.state.players[idx].disconnected = false;
       sendTo(ws, {
         type: 'rejoined', v: GAME_VERSION,
@@ -232,10 +233,44 @@ function handleMessage(ws, msg) {
       break;
     }
 
+    // Deliberately giving up a lobby seat (the Leave button). A silent
+    // disconnect keeps the seat instead — phones drop the socket the moment
+    // the browser is backgrounded (e.g. to text the invite link).
+    case 'leave': {
+      if (!room || room.started) return; // mid-game leave = plain disconnect
+      const idx = ws.playerIdx;
+      ws.roomCode = null;
+      room.players.splice(idx, 1);
+      room.sockets.splice(idx, 1);
+      room.sockets.forEach((s, i) => { if (s) s.playerIdx = i; });
+      if (room.players.length === 0) {
+        rooms.delete(room.code);
+        return;
+      }
+      if (idx < room.host) room.host -= 1;
+      else if (idx === room.host) room.host = 0;
+      if (room.host >= room.players.length) room.host = 0;
+      broadcastLobby(room);
+      break;
+    }
+
     case 'start': {
       if (!room || room.started) return;
       if (ws.playerIdx !== room.host) return;
-      if (room.players.length < 2) return;
+      // Prune ghosts — lobby seats whose players dropped and never returned.
+      for (let i = room.players.length - 1; i >= 0; i--) {
+        if (room.players[i].disconnected) {
+          room.players.splice(i, 1);
+          room.sockets.splice(i, 1);
+        }
+      }
+      room.sockets.forEach((s, i) => { if (s) s.playerIdx = i; });
+      room.host = room.sockets.indexOf(ws);
+      if (room.players.length < 2) {
+        broadcastLobby(room);
+        return;
+      }
+      room.firstPlayer %= room.players.length;
       room.started = true;
       room.state = newGame(room.players.map((p) => ({ name: p.name })), room.firstPlayer);
       broadcastState(room, { kind: 'start' });
@@ -306,15 +341,12 @@ function handleLeave(ws) {
   const idx = ws.playerIdx;
 
   if (!room.started) {
-    room.players.splice(idx, 1);
-    room.sockets.splice(idx, 1);
-    room.sockets.forEach((s, i) => { if (s) s.playerIdx = i; });
-    if (room.players.length === 0) {
-      rooms.delete(room.code);
-    } else {
-      if (room.host >= room.players.length) room.host = 0;
-      broadcastLobby(room);
-    }
+    // Keep the seat — this is usually a phone backgrounding the browser
+    // for a moment. The player rejoins by token; the room dies by sweeper
+    // if nobody comes back, and 'start' prunes any lingering ghosts.
+    room.players[idx].disconnected = true;
+    room.sockets[idx] = null;
+    broadcastLobby(room);
     return;
   }
 
@@ -324,11 +356,9 @@ function handleLeave(ws) {
   room.state.players[idx].disconnected = true;
   room.sockets[idx] = null;
 
-  if (room.sockets.every((s) => s === null)) {
-    rooms.delete(room.code);
-    return;
-  }
-  if (room.host === idx) {
+  // Even with everyone disconnected the room survives (phones may all be
+  // backgrounded at once) — the sweeper below reclaims it after an hour.
+  if (room.host === idx && room.sockets.some((s) => s !== null)) {
     room.host = room.sockets.findIndex((s) => s !== null);
   }
   if (room.state.phase !== 'over' && room.state.current === idx) {
@@ -341,6 +371,21 @@ function handleLeave(ws) {
   }
   broadcastState(room, { kind: 'left', name });
 }
+
+// Reclaim rooms where every seat has been empty for an hour — nobody is
+// coming back. (The Lambda version gets this for free from DynamoDB TTL.)
+setInterval(() => {
+  rooms.forEach((room, code) => {
+    const dead = room.sockets.every((s) => s === null || s === undefined) && room.players.every((p) => p.disconnected);
+    if (!dead) {
+      room.emptySince = null;
+    } else if (!room.emptySince) {
+      room.emptySince = Date.now();
+    } else if (Date.now() - room.emptySince > 3600_000) {
+      rooms.delete(code);
+    }
+  });
+}, 10 * 60 * 1000);
 
 // Keep connections alive through proxies; drop dead sockets.
 setInterval(() => {

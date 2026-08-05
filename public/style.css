@@ -324,6 +324,11 @@ body {
   font-size: 1.1rem;
 }
 
+/* Player whose connection dropped (backgrounded phone) — seat is held. */
+.lobby-players li.away {
+  opacity: 0.55;
+}
+
 /* ============ Game screen ============ */
 
 .game-header {

@@ -196,7 +196,7 @@ async function broadcastLobby(room) {
     you: i,
     host: room.host,
     token: p.token, // secret; lets this player rejoin later
-    players: room.players.map((q) => ({ name: q.name })),
+    players: room.players.map((q) => ({ name: q.name, away: !!q.disconnected })),
   })));
 }
 
@@ -301,15 +301,16 @@ async function onMessage(connId, msg, ip) {
       let name = null;
       const { room, out } = await mutateRoom(code, (r) => {
         seat = token ? r.players.findIndex((p) => p.token === token) : -1;
-        if (!r.started || seat === -1) return false;
+        if (seat === -1) return false;
         r.players[seat].connectionId = connId;
         r.players[seat].disconnected = false;
-        r.state.players[seat].disconnected = false;
+        if (r.started) r.state.players[seat].disconnected = false;
         name = r.players[seat].name;
         return true;
       });
       if (!room || out !== true) return sendTo(connId, { type: 'rejoin-failed', v: GAME_VERSION });
       await mapConnection(connId, code, seat);
+      if (!room.started) return broadcastLobby(room); // back in the lobby
       await sendTo(connId, {
         type: 'rejoined', v: GAME_VERSION,
         code, you: seat, host: room.host, token,
@@ -327,12 +328,46 @@ async function onMessage(connId, msg, ip) {
   switch (msg.type) {
     case 'start': {
       const { room, out } = await mutateRoom(conn.code, (r) => {
-        if (r.started || idx !== r.host || r.players.length < 2) return false;
+        if (r.started || idx !== r.host) return false;
+        // Prune ghosts — lobby seats whose players dropped and never returned.
+        const host = r.players[idx];
+        r.players = r.players.filter((p) => !p.disconnected);
+        r.host = r.players.indexOf(host);
+        if (r.players.length < 2) return false;
+        r.firstPlayer %= r.players.length;
         r.started = true;
         r.state = newGame(r.players.map((p) => ({ name: p.name })), r.firstPlayer);
         return true;
       });
-      if (room && out === true) await broadcastState(room, { kind: 'start' });
+      if (room && out === true) {
+        // Pruning may have re-numbered seats — refresh every mapping.
+        await Promise.all(room.players.map((p, i) => mapConnection(p.connectionId, room.code, i)));
+        await broadcastState(room, { kind: 'start' });
+      }
+      return;
+    }
+
+    // Deliberately giving up a lobby seat (the Leave button). A silent
+    // disconnect keeps the seat instead — phones drop the socket the moment
+    // the browser is backgrounded (e.g. to text the invite link).
+    case 'leave': {
+      const { room, out } = await mutateRoom(conn.code, (r) => {
+        if (r.started) return false; // mid-game leave = plain disconnect
+        if (!r.players[idx] || r.players[idx].connectionId !== connId) return false;
+        r.players.splice(idx, 1);
+        if (r.players.length === 0) return 'delete';
+        if (idx < r.host) r.host -= 1;
+        else if (idx === r.host) r.host = 0;
+        if (r.host >= r.players.length) r.host = 0;
+        return true;
+      });
+      await ddb.send(new DeleteCommand({ TableName: TABLE, Key: { pk: `CONN#${connId}` } }));
+      if (room && out === true) {
+        // Seats shifted — refresh every remaining connection's mapping.
+        await Promise.all(room.players.map((p, i) =>
+          p.connectionId ? mapConnection(p.connectionId, room.code, i) : null));
+        await broadcastLobby(room);
+      }
       return;
     }
 
@@ -438,21 +473,26 @@ async function onDisconnect(connId) {
     if (!r.players[idx] || r.players[idx].connectionId !== connId) return false;
 
     if (!r.started) {
-      r.players.splice(idx, 1);
-      if (r.players.length === 0) return 'delete';
-      if (r.host >= r.players.length) r.host = 0;
+      // Keep the seat — this is usually a phone backgrounding the browser
+      // for a moment. The player rejoins by token; 'start' prunes any
+      // lingering ghosts and the room itself expires via TTL.
+      r.players[idx].disconnected = true;
+      r.players[idx].connectionId = null;
       mode = 'lobby';
       return true;
     }
 
-    // Mid-game: mark the player as gone and skip their turns.
+    // Mid-game: mark the player as gone and skip their turns. Even with
+    // everyone disconnected the room survives (phones may all be
+    // backgrounded at once) — TTL reclaims it if nobody returns.
     name = r.players[idx].name;
     r.players[idx].disconnected = true;
     r.players[idx].connectionId = null;
     r.state.players[idx].disconnected = true;
-    if (r.players.every((p) => p.disconnected)) return 'delete';
-    if (r.host === idx) r.host = r.players.findIndex((p) => !p.disconnected);
-    if (r.state.phase !== 'over' && r.state.current === idx) {
+    if (r.host === idx && r.players.some((p) => !p.disconnected)) {
+      r.host = r.players.findIndex((p) => !p.disconnected);
+    }
+    if (r.state.phase !== 'over' && r.state.current === idx && r.players.some((p) => !p.disconnected)) {
       nextPlayer(r.state);
       r.state.phase = 'roll';
       r.state.dice = null;
@@ -462,11 +502,6 @@ async function onDisconnect(connId) {
   });
 
   if (!room || out !== true) return;
-  if (mode === 'lobby') {
-    // Seats shifted — refresh every remaining connection's mapping.
-    await Promise.all(room.players.map((p, i) => mapConnection(p.connectionId, room.code, i)));
-    await broadcastLobby(room);
-  } else if (mode === 'game') {
-    await broadcastState(room, { kind: 'left', name });
-  }
+  if (mode === 'lobby') await broadcastLobby(room);
+  else if (mode === 'game') await broadcastState(room, { kind: 'left', name });
 }
