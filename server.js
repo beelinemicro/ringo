@@ -84,13 +84,29 @@ function broadcastPresence() {
 const STATS_FILE = process.env.RINGO_STATS_FILE
   || path.join(path.dirname(fileURLToPath(import.meta.url)), 'stats.json');
 
-let stats = {};
-try { stats = JSON.parse(fs.readFileSync(STATS_FILE, 'utf8')); } catch { /* first run */ }
+// { players: { key: {name, wins, losses, streak, bestStreak} },
+//   h2h:     { 'a|b': {aName, bName, aWins, bWins} } }
+let stats = { players: {}, h2h: {} };
+try {
+  const raw = JSON.parse(fs.readFileSync(STATS_FILE, 'utf8'));
+  stats = raw.players ? raw : { players: raw, h2h: {} }; // migrate the old flat shape
+} catch { /* first run */ }
+
+const byRank = (a, b) => b.wins - a.wins || a.losses - b.losses;
 
 function topStats() {
-  return Object.values(stats)
-    .sort((a, b) => b.wins - a.wins || a.losses - b.losses)
-    .slice(0, 5);
+  return Object.values(stats.players).sort(byRank).slice(0, 5);
+}
+
+// Everything for the "Full family stats" view: the whole leaderboard plus
+// every rivalry, biggest first.
+function fullStats() {
+  return {
+    players: Object.values(stats.players).sort(byRank),
+    h2h: Object.values(stats.h2h)
+      .map((x) => ({ a: x.aName, b: x.bName, aWins: x.aWins, bWins: x.bWins }))
+      .sort((p, q) => (q.aWins + q.bWins) - (p.aWins + p.bWins)),
+  };
 }
 
 // Menus refresh live: everyone on the site gets the new standings the
@@ -101,15 +117,36 @@ function broadcastStats() {
 }
 
 function recordResult(room) {
-  room.state.players.forEach((p, i) => {
-    if (p.isBot) return; // bots never make the board
-    const key = p.name.trim().toLowerCase();
-    if (!key) return;
-    const s = stats[key] || (stats[key] = { name: p.name, wins: 0, losses: 0 });
+  const winner = room.state.winner;
+  const humans = room.state.players
+    .map((p, i) => ({ name: p.name, key: p.name.trim().toLowerCase(), i }))
+    .filter((p) => !room.state.players[p.i].isBot && p.key); // bots never make the board
+
+  humans.forEach((p) => {
+    const won = p.i === winner;
+    const s = stats.players[p.key]
+      || (stats.players[p.key] = { name: p.name, wins: 0, losses: 0, streak: 0, bestStreak: 0 });
     s.name = p.name; // keep the latest capitalization
-    if (i === room.state.winner) s.wins++;
+    if (won) s.wins++;
     else s.losses++;
+    s.streak = won ? (s.streak || 0) + 1 : 0;
+    s.bestStreak = Math.max(s.bestStreak || 0, s.streak);
   });
+
+  // Head-to-head: the winner logs a result against every other human.
+  const w = humans.find((p) => p.i === winner);
+  if (w) {
+    humans.filter((p) => p.i !== winner).forEach((p) => {
+      const [a, b] = [w, p].sort((x, y) => (x.key < y.key ? -1 : 1));
+      const r = stats.h2h[`${a.key}|${b.key}`]
+        || (stats.h2h[`${a.key}|${b.key}`] = { aName: a.name, bName: b.name, aWins: 0, bWins: 0 });
+      r.aName = a.name;
+      r.bName = b.name;
+      if (a === w) r.aWins++;
+      else r.bWins++;
+    });
+  }
+
   fs.writeFile(STATS_FILE, JSON.stringify(stats, null, 2), (err) => {
     if (err) console.error('stats:', err);
   });
@@ -271,6 +308,11 @@ function handleMessage(ws, msg) {
     }
 
     case 'presence-ping': // keepalive only matters for API Gateway
+      break;
+
+    // The "Full family stats" view, requested over the presence socket.
+    case 'fullstats':
+      sendTo(ws, { type: 'fullstats', v: GAME_VERSION, ...fullStats() });
       break;
 
     case 'create': {

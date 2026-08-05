@@ -208,6 +208,67 @@ body {
   font-weight: 600;
 }
 
+.hof-more {
+  margin-top: 10px;
+  background: none;
+  border: none;
+  color: inherit;
+  font: inherit;
+  font-size: 0.85rem;
+  opacity: 0.7;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.hof-more:hover {
+  opacity: 1;
+}
+
+/* ============ Family stats modal ============ */
+
+.stats-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.98rem;
+}
+
+.stats-table th {
+  text-align: center;
+  font-size: 0.8rem;
+  opacity: 0.6;
+  padding: 4px 6px;
+}
+
+.stats-table td {
+  text-align: center;
+  padding: 6px;
+  border-top: 1px solid rgba(59, 42, 26, 0.15);
+}
+
+.stats-table .stats-name {
+  text-align: left;
+  font-weight: 600;
+}
+
+.stats-h3 {
+  margin: 18px 0 8px;
+  text-align: center;
+}
+
+.stats-h2h {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 0.98rem;
+  text-align: center;
+}
+
+.stats-h2h-row {
+  background: rgba(59, 42, 26, 0.08);
+  border-radius: 10px;
+  padding: 6px 12px;
+}
+
 /* ============ Emoji reactions ============ */
 
 .react-bar {

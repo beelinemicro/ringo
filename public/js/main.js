@@ -901,7 +901,7 @@ function spawnReaction(emoji, by) {
   setTimeout(() => el.remove(), 2600);
 }
 
-// ---------- hall of fame ----------
+// ---------- hall of fame & family stats ----------
 
 // Online wins/losses per family member, kept by the server and pushed to
 // every open menu the moment a game ends.
@@ -917,11 +917,51 @@ function renderHallOfFame(top) {
     const li = document.createElement('li');
     const w = `${s.wins} win${s.wins === 1 ? '' : 's'}`;
     const l = s.losses ? ` · ${s.losses} loss${s.losses === 1 ? '' : 'es'}` : '';
-    li.textContent = `${medals[i] || '•'} ${s.name} — ${w}${l}`;
+    const fire = s.streak >= 2 ? ` 🔥${s.streak}` : '';
+    li.textContent = `${medals[i] || '•'} ${s.name} — ${w}${l}${fire}`;
     list.appendChild(li);
   });
   $('hof').classList.remove('hidden');
 }
+
+// The deep-dive modal: full leaderboard with streaks, plus every rivalry.
+function renderFullStats(msg) {
+  const body = $('stats-players');
+  body.innerHTML = '';
+  msg.players.forEach((s) => {
+    const tr = document.createElement('tr');
+    [s.name, s.wins, s.losses, s.streak >= 2 ? `🔥${s.streak}` : s.streak || '–', s.bestStreak || '–']
+      .forEach((v, i) => {
+        const td = document.createElement('td');
+        td.textContent = v;
+        if (i === 0) td.className = 'stats-name';
+        tr.appendChild(td);
+      });
+    body.appendChild(tr);
+  });
+  const h2h = $('stats-h2h');
+  h2h.innerHTML = '';
+  if (msg.h2h.length === 0) {
+    h2h.textContent = 'No head-to-head games yet — rivalries start with two humans in one room.';
+  }
+  msg.h2h.forEach((r) => {
+    const row = document.createElement('div');
+    row.className = 'stats-h2h-row';
+    const lead = r.aWins === r.bWins ? 'tied with' : (r.aWins > r.bWins ? 'leads' : 'trails');
+    row.textContent = `${r.a} ${r.aWins} – ${r.bWins} ${r.b}`;
+    row.title = `${r.a} ${lead} ${r.b}`;
+    h2h.appendChild(row);
+  });
+  $('stats-modal').classList.remove('hidden');
+}
+
+$('btn-fullstats').addEventListener('click', () => {
+  sfx.click();
+  if (presenceWs?.readyState === WebSocket.OPEN) {
+    presenceWs.send(JSON.stringify({ type: 'fullstats' }));
+  }
+});
+$('btn-stats-close').addEventListener('click', () => { sfx.click(); $('stats-modal').classList.add('hidden'); });
 
 // ---------- turn nudges ----------
 
@@ -960,6 +1000,7 @@ document.addEventListener('visibilitychange', () => {
 // answers 'hello' with live count broadcasts and logs the visit.
 
 let presenceRetry = 5000;
+let presenceWs = null; // also carries stats requests from the menu
 
 function startPresence() {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
@@ -970,6 +1011,7 @@ function startPresence() {
   } catch {
     return; // opened from disk with no server — no badge, no retries
   }
+  presenceWs = ws;
   let keepalive = null;
 
   ws.onopen = () => {
@@ -988,11 +1030,14 @@ function startPresence() {
       $('presence').classList.remove('hidden');
     } else if (msg.type === 'stats') {
       renderHallOfFame(msg.top);
+    } else if (msg.type === 'fullstats') {
+      renderFullStats(msg);
     }
   };
   ws.onerror = () => ws.close();
   ws.onclose = () => {
     clearInterval(keepalive);
+    presenceWs = null;
     $('presence').classList.add('hidden');
     setTimeout(startPresence, presenceRetry);
     presenceRetry = Math.min(presenceRetry * 2, 5 * 60 * 1000);

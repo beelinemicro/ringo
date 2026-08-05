@@ -239,15 +239,65 @@ try {
     const chipMoves = host.msgs.filter((m) => m.type === 'state' && m.event?.by === 'Chip').length;
     assert.ok(chipMoves > 0, 'bot actually played');
 
-    const stats = JSON.parse(fs.readFileSync(STATS_FILE, 'utf8'));
-    assert.ok(stats.steve, 'human result recorded');
-    assert.equal(stats.steve.wins + stats.steve.losses, 1, 'exactly one game recorded');
-    assert.ok(!stats.chip, 'bots never make the hall of fame');
+    const data = JSON.parse(fs.readFileSync(STATS_FILE, 'utf8'));
+    const s = data.players.steve;
+    assert.ok(s, 'human result recorded');
+    assert.equal(s.wins + s.losses, 1, 'exactly one game recorded');
+    const won = finished.state.winner === 0;
+    assert.equal(s.streak, won ? 1 : 0, 'current streak tracks the result');
+    assert.equal(s.bestStreak, won ? 1 : 0, 'best streak tracks too');
+    assert.ok(!data.players.chip, 'bots never make the hall of fame');
+    assert.deepEqual(data.h2h, {}, 'no rivalry from a bots-only opposition');
     await menu.waitFor('stats', (m) => m.top.length === 1);
 
     menu.close();
     host.close();
     console.log(`full game vs bot (${finished.state.players[finished.state.winner].name} won) + stats ✔`);
+  }
+
+  // --- head-to-head: two humans, rivalry recorded, fullstats served ---
+  {
+    const a = await client();
+    a.sendJ({ type: 'create', name: 'Steve' });
+    const seat = await a.waitFor('lobby');
+    const b = await client();
+    b.sendJ({ type: 'join', code: seat.code, name: 'Dad' });
+    await a.waitFor('lobby', (m) => m.players.length === 2);
+    a.sendJ({ type: 'start' });
+    await a.waitFor('state', (m) => m.event?.kind === 'start');
+
+    const act = (ws, meIdx) => {
+      const m = ws.last('state');
+      if (!m || m.state.phase === 'over' || m.state.current !== meIdx) return;
+      if (m.state.phase === 'roll') return ws.sendJ({ type: 'roll' });
+      const cells = selectableCells(m.state);
+      if (cells.length) ws.sendJ({ type: 'place', r: cells[0][0], c: cells[0][1] });
+      else ws.sendJ({ type: 'roll' });
+    };
+    let over = null;
+    for (let tick = 0; tick < 3000 && !over; tick++) {
+      act(a, 0);
+      act(b, 1);
+      await sleep(15);
+      if (a.last('state')?.state.phase === 'over') over = a.last('state');
+    }
+    assert.ok(over, 'human-vs-human game reached a winner');
+
+    const data = JSON.parse(fs.readFileSync(STATS_FILE, 'utf8'));
+    const riv = data.h2h['dad|steve'];
+    assert.ok(riv, 'rivalry recorded under sorted key');
+    assert.equal(riv.aWins + riv.bWins, 1, 'exactly one head-to-head result');
+
+    const menu = await client();
+    menu.sendJ({ type: 'fullstats' });
+    const full = await menu.waitFor('fullstats');
+    assert.ok(full.players.length >= 2, 'full leaderboard served');
+    assert.equal(full.h2h.length, 1, 'rivalry appears in fullstats');
+    assert.ok(full.players.every((p) => 'streak' in p && 'bestStreak' in p), 'streak fields present');
+    a.close();
+    b.close();
+    menu.close();
+    console.log('head-to-head + fullstats ✔');
   }
 
   console.log('All RINGO server tests passed ✔');

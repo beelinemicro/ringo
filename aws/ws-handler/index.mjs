@@ -264,43 +264,88 @@ async function runBots(code) {
 // ---------- hall of fame ----------
 
 // One STAT#<name> item per family member (online games only; bots never
-// make the board). No ttl — like the visit log, these are permanent.
+// make the board) plus one H2H#<a>#<b> item per rivalry. No ttl — like
+// the visit log, these are permanent.
 async function recordResult(room) {
   const winner = room.state.winner;
-  await Promise.all(room.state.players.map((p, i) => {
-    if (p.isBot) return null;
-    const key = p.name.trim().toLowerCase();
-    if (!key) return null;
-    return ddb.send(new UpdateCommand({
+  const humans = room.state.players
+    .map((p, i) => ({ name: p.name, key: p.name.trim().toLowerCase(), i }))
+    .filter((p) => !room.state.players[p.i].isBot && p.key);
+
+  await Promise.all(humans.map(async (p) => {
+    const won = p.i === winner;
+    const cur = (await getItem(`STAT#${p.key}`)) || {};
+    const streak = won ? (cur.streak || 0) + 1 : 0;
+    await ddb.send(new PutCommand({
       TableName: TABLE,
-      Key: { pk: `STAT#${key}` },
-      UpdateExpression: 'SET #n = :n ADD wins :w, losses :l',
-      ExpressionAttributeNames: { '#n': 'name' },
-      ExpressionAttributeValues: {
-        ':n': p.name,
-        ':w': i === winner ? 1 : 0,
-        ':l': i === winner ? 0 : 1,
+      Item: {
+        pk: `STAT#${p.key}`,
+        name: p.name, // keep the latest capitalization
+        wins: (cur.wins || 0) + (won ? 1 : 0),
+        losses: (cur.losses || 0) + (won ? 0 : 1),
+        streak,
+        bestStreak: Math.max(cur.bestStreak || 0, streak),
       },
     }));
   }));
+
+  // Head-to-head: the winner logs a result against every other human.
+  const w = humans.find((p) => p.i === winner);
+  if (w) {
+    await Promise.all(humans.filter((p) => p.i !== winner).map((p) => {
+      const [a, b] = [w, p].sort((x, y) => (x.key < y.key ? -1 : 1));
+      return ddb.send(new UpdateCommand({
+        TableName: TABLE,
+        Key: { pk: `H2H#${a.key}#${b.key}` },
+        UpdateExpression: 'SET aName = :an, bName = :bn ADD #wf :one',
+        ExpressionAttributeNames: { '#wf': a === w ? 'aWins' : 'bWins' },
+        ExpressionAttributeValues: { ':an': a.name, ':bn': b.name, ':one': 1 },
+      }));
+    }));
+  }
   await broadcastStats();
 }
 
-async function topStats() {
+async function scanPrefix(prefix) {
   const items = [];
   let key;
   do {
     const r = await ddb.send(new ScanCommand({
       TableName: TABLE,
       FilterExpression: 'begins_with(pk, :p)',
-      ExpressionAttributeValues: { ':p': 'STAT#' },
+      ExpressionAttributeValues: { ':p': prefix },
       ExclusiveStartKey: key,
     }));
     items.push(...(r.Items || []));
     key = r.LastEvaluatedKey;
   } while (key);
-  items.sort((a, b) => (b.wins || 0) - (a.wins || 0) || (a.losses || 0) - (b.losses || 0));
-  return items.slice(0, 5).map((s) => ({ name: s.name, wins: s.wins || 0, losses: s.losses || 0 }));
+  return items;
+}
+
+const playerStats = (s) => ({
+  name: s.name,
+  wins: s.wins || 0,
+  losses: s.losses || 0,
+  streak: s.streak || 0,
+  bestStreak: s.bestStreak || 0,
+});
+
+const byRank = (a, b) => b.wins - a.wins || a.losses - b.losses;
+
+async function topStats() {
+  return (await scanPrefix('STAT#')).map(playerStats).sort(byRank).slice(0, 5);
+}
+
+// Everything for the "Full family stats" view: the whole leaderboard plus
+// every rivalry, biggest first.
+async function fullStats() {
+  const [stats, h2h] = await Promise.all([scanPrefix('STAT#'), scanPrefix('H2H#')]);
+  return {
+    players: stats.map(playerStats).sort(byRank),
+    h2h: h2h
+      .map((x) => ({ a: x.aName, b: x.bName, aWins: x.aWins || 0, bWins: x.bWins || 0 }))
+      .sort((p, q) => (q.aWins + q.bWins) - (p.aWins + p.bWins)),
+  };
 }
 
 // Menus refresh live: everyone on the site gets the new standings the
@@ -333,6 +378,10 @@ async function onMessage(connId, msg, ip) {
       await sendTo(connId, { type: 'stats', v: GAME_VERSION, top: await topStats() });
       return;
     }
+
+    // The "Full family stats" view, requested over the presence socket.
+    case 'fullstats':
+      return sendTo(connId, { type: 'fullstats', v: GAME_VERSION, ...(await fullStats()) });
 
     // Keepalive from a presence connection — just refresh its TTL.
     case 'presence-ping': {
