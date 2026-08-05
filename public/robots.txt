@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://ringo.beelinemicrosystems.com/sitemap.xml
