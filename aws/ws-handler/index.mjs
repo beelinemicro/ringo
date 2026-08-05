@@ -11,7 +11,7 @@
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient, GetCommand, PutCommand, DeleteCommand } from '@aws-sdk/lib-dynamodb';
 import { ApiGatewayManagementApiClient, PostToConnectionCommand } from '@aws-sdk/client-apigatewaymanagementapi';
-import { newGame, rollDice, applyRoll, applyPlace, isLegal, nextPlayer } from './game.js';
+import { GAME_VERSION, newGame, rollDice, applyRoll, applyPlace, isLegal, nextPlayer } from './game.js';
 
 const TABLE = process.env.RINGO_TABLE || 'ringo';
 const TTL_HOURS = 24;
@@ -92,6 +92,7 @@ async function sendTo(connId, msg) {
 async function broadcastLobby(room) {
   await Promise.all(room.players.map((p, i) => sendTo(p.connectionId, {
     type: 'lobby',
+    v: GAME_VERSION,
     code: room.code,
     you: i,
     host: room.host,
@@ -101,7 +102,7 @@ async function broadcastLobby(room) {
 
 async function broadcastState(room, event) {
   await Promise.all(room.players.map((p) =>
-    sendTo(p.connectionId, { type: 'state', state: room.state, event })));
+    sendTo(p.connectionId, { type: 'state', v: GAME_VERSION, state: room.state, event })));
 }
 
 function cleanName(raw) {

@@ -36,6 +36,30 @@ body {
   min-height: 100vh;
 }
 
+.update-banner {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 60;
+  text-align: center;
+  padding: 12px 16px;
+  font-weight: 600;
+  font-size: 1.05rem;
+  color: #4a2e00;
+  background: linear-gradient(180deg, #ffd34d, #f0a500);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+  cursor: pointer;
+  animation: slidedown 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.update-banner:hover { filter: brightness(1.06); }
+
+@keyframes slidedown {
+  from { transform: translateY(-100%); }
+  to { transform: none; }
+}
+
 #confetti {
   position: fixed;
   inset: 0;

@@ -65,6 +65,11 @@ Deploying changes:
 server); the web deploy script overwrites it with the API Gateway `wss://`
 endpoint.
 
+**When changing the rules**, bump `GAME_VERSION` in `public/js/game.js` and
+deploy both halves. Servers stamp the version on every message; any open page
+that hears a newer number shows a "new rules — tap to refresh" banner (with a
+confirmation first if the player is mid-game).
+
 ## Project layout
 
 ```

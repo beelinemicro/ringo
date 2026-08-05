@@ -13,6 +13,10 @@
 //  - First player with five same-colored rings in a row (across, down, or
 //    diagonal) shouts "RINGO!" and wins.
 
+// Bump this whenever the rules change. Servers stamp it on every message;
+// clients that see a newer number show the "refresh for new rules" banner.
+export const GAME_VERSION = 2;
+
 export const SIZE = 5;
 export const WILD = 'W';
 export const COL_LABELS = ['R', 'I', 'N', 'G', 'O'];

@@ -1,7 +1,7 @@
 // RINGO — client application: screens, rendering, turn flow, and online play.
 
 import {
-  SIZE, WILD, COL_LABELS, COLORS,
+  GAME_VERSION, SIZE, WILD, COL_LABELS, COLORS,
   newGame, rollDice, applyRoll, applyPlace, isLegal, selectableCells, diceLabel,
 } from './game.js';
 import { chooseCell, chooseSteal } from './ai.js';
@@ -526,7 +526,25 @@ function send(msg) {
   if (net?.ws?.readyState === WebSocket.OPEN) net.ws.send(JSON.stringify(msg));
 }
 
+// ---------- stale-version banner ----------
+
+let updateBannerShown = false;
+
+function checkVersion(serverVersion) {
+  if (updateBannerShown || !serverVersion || serverVersion <= GAME_VERSION) return;
+  updateBannerShown = true;
+  $('update-banner').classList.remove('hidden');
+}
+
+$('update-banner').addEventListener('click', () => {
+  const inGame = mode === 'online' && state && state.phase !== 'over';
+  if (!inGame || confirm('Refreshing now will drop you out of the current game. Refresh anyway?')) {
+    location.reload();
+  }
+});
+
 function handleServer(msg) {
+  checkVersion(msg.v);
   switch (msg.type) {
     case 'error':
       onlineStatus(msg.message);

@@ -11,7 +11,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
-import { newGame, rollDice, applyRoll, applyPlace, isLegal, nextPlayer } from './public/js/game.js';
+import { GAME_VERSION, newGame, rollDice, applyRoll, applyPlace, isLegal, nextPlayer } from './public/js/game.js';
 
 const PORT = process.env.PORT || 3000;
 const PUBLIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'public');
@@ -87,6 +87,7 @@ function broadcastLobby(room) {
   room.sockets.forEach((ws, i) => {
     sendTo(ws, {
       type: 'lobby',
+      v: GAME_VERSION,
       code: room.code,
       you: i,
       host: room.host,
@@ -96,7 +97,7 @@ function broadcastLobby(room) {
 }
 
 function broadcastState(room, event) {
-  broadcast(room, { type: 'state', state: room.state, event });
+  broadcast(room, { type: 'state', v: GAME_VERSION, state: room.state, event });
 }
 
 function cleanName(raw) {
