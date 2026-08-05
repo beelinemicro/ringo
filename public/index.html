@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>RINGO — The Family Board Game</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <canvas id="confetti"></canvas>
+
+  <main id="app">
+
+    <!-- ============ MENU ============ -->
+    <section id="screen-menu" class="screen">
+      <div class="logo" aria-hidden="true">
+        <span class="logo-ring c0"></span><span class="logo-ring c1"></span><span class="logo-ring c2"></span><span class="logo-ring c3"></span><span class="logo-ring c4"></span>
+      </div>
+      <h1 class="title">RINGO</h1>
+      <p class="tagline">Five rings in a row. Shout it loud!</p>
+      <div class="menu-buttons">
+        <button class="btn btn-big" id="btn-mode-local">Pass &amp; Play</button>
+        <button class="btn btn-big" id="btn-mode-ai">Play vs Computer</button>
+        <button class="btn btn-big btn-primary" id="btn-mode-online">Play Online</button>
+        <button class="btn btn-ghost" id="btn-rules">How to Play</button>
+      </div>
+      <p class="credit">A family classic, invented by Dad.</p>
+    </section>
+
+    <!-- ============ SETUP ============ -->
+    <section id="screen-setup" class="screen hidden">
+      <h2 id="setup-title">Game Setup</h2>
+      <div id="setup-body"></div>
+      <div class="setup-actions">
+        <button class="btn btn-ghost" id="btn-setup-back">Back</button>
+        <button class="btn btn-primary" id="btn-setup-go">Start</button>
+      </div>
+    </section>
+
+    <!-- ============ ONLINE LOBBY ============ -->
+    <section id="screen-lobby" class="screen hidden">
+      <h2>Game Room</h2>
+      <div class="room-code-wrap">
+        <div class="room-code" id="lobby-code">----</div>
+        <p class="hint">Share this code with your family so they can join.</p>
+      </div>
+      <ul id="lobby-players" class="lobby-players"></ul>
+      <p id="lobby-status" class="hint"></p>
+      <div class="setup-actions">
+        <button class="btn btn-ghost" id="btn-lobby-leave">Leave</button>
+        <button class="btn btn-primary hidden" id="btn-lobby-start">Start Game</button>
+      </div>
+    </section>
+
+    <!-- ============ GAME ============ -->
+    <section id="screen-game" class="screen hidden">
+      <header class="game-header">
+        <button class="btn btn-small btn-ghost" id="btn-quit">&larr; Menu</button>
+        <div id="player-chips" class="player-chips"></div>
+        <button class="btn btn-small btn-ghost" id="btn-mute" title="Toggle sound">🔊</button>
+      </header>
+
+      <div class="table">
+        <div id="board" class="board" aria-label="RINGO board"></div>
+
+        <div class="side-panel">
+          <div class="dice-area">
+            <div class="die" id="die-col"><span class="die-face">R</span></div>
+            <div class="die" id="die-row"><span class="die-face">1</span></div>
+          </div>
+          <button class="btn btn-primary btn-roll" id="btn-roll">Roll!</button>
+          <div id="message" class="message" aria-live="polite"></div>
+        </div>
+      </div>
+
+      <div id="banner" class="banner hidden">
+        <div class="banner-card">
+          <div class="banner-text" id="banner-text">RINGO!</div>
+          <div class="banner-sub" id="banner-sub"></div>
+          <div class="setup-actions">
+            <button class="btn btn-ghost" id="btn-banner-menu">Menu</button>
+            <button class="btn btn-primary" id="btn-banner-again">Play Again</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ RULES MODAL ============ -->
+    <div id="rules-modal" class="banner hidden">
+      <div class="banner-card rules-card">
+        <h2>How to Play RINGO</h2>
+        <ul class="rules-list">
+          <li>The board is a 5&times;5 grid. Columns are lettered <strong>R-I-N-G-O</strong>, rows are numbered <strong>1-5</strong>.</li>
+          <li>On your turn, roll both dice: one shows a <strong>letter</strong> (R, I, N, G, O), the other a <strong>number</strong> (1&ndash;5). Each die also has one <strong>&#9733; wild</strong> face.</li>
+          <li>Place a ring of your color on the space where the letter column and number row meet.</li>
+          <li>A <strong>wild</strong> lets you choose that coordinate yourself &mdash; and it can <strong>replace an opponent's ring</strong> on any space it reaches. Two wilds? Anywhere on the board.</li>
+          <li>If your rolled space holds an <strong>opponent's ring</strong>, choose: <strong>steal the spot</strong> or roll again. Your own ring? Just roll again &mdash; you never lose your turn.</li>
+          <li>First player to line up <strong>five rings of their color in a row</strong> &mdash; across, down, or diagonally &mdash; shouts <strong>&ldquo;RINGO!&rdquo;</strong> and wins.</li>
+        </ul>
+        <div class="setup-actions">
+          <button class="btn btn-primary" id="btn-rules-close">Got it!</button>
+        </div>
+      </div>
+    </div>
+
+  </main>
+
+  <script src="js/config.js"></script>
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>

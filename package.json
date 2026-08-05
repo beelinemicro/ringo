@@ -1,0 +1,14 @@
+{
+  "name": "ringo",
+  "version": "1.0.0",
+  "description": "RINGO — the family board game, now playable online. Five rings in a row wins!",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node test/game.test.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}
