@@ -554,14 +554,32 @@ function scheduleRejoin() {
 
 // Phones kill the socket the instant the browser is backgrounded (switching
 // to Messages to paste an invite link, locking the screen). The moment we're
-// foregrounded again, sit straight back down.
+// foregrounded again, sit straight back down. Crucially, some browsers never
+// deliver the close event for a socket that died while frozen — the page
+// would sit deaf on a zombie connection, taps going nowhere. So after any
+// real time away we don't trust an existing socket: drop it and rejoin.
+let hiddenSince = null;
+
 document.addEventListener('visibilitychange', () => {
-  if (document.hidden || net) return;
+  if (document.hidden) {
+    hiddenSince = Date.now();
+    return;
+  }
+  const away = hiddenSince ? Date.now() - hiddenSince : 0;
+  hiddenSince = null;
   const seat = savedSeat();
   if (!seat) return;
   const inGame = mode === 'online' && state && state.phase !== 'over';
   const inLobby = !$('screen-lobby').classList.contains('hidden');
-  if (inGame || inLobby) {
+  if (!inGame && !inLobby) return;
+  if (net && away > 20_000) {
+    const ws = net.ws;
+    ws.onclose = null; // no double-rejoin from the close handler
+    clearInterval(net.keepalive);
+    net = null;
+    ws.close();
+  }
+  if (!net) {
     rejoinAttempts = 1; // fresh round of retries
     connectGame({ type: 'rejoin', code: seat.code, token: seat.token });
   }
@@ -619,7 +637,16 @@ function connectOnline(joinCode) {
 }
 
 function send(msg) {
-  if (net?.ws?.readyState === WebSocket.OPEN) net.ws.send(JSON.stringify(msg));
+  if (net?.ws?.readyState === WebSocket.OPEN) {
+    net.ws.send(JSON.stringify(msg));
+    return;
+  }
+  // Tap landed on a dead socket — recover the seat instead of eating it.
+  const seat = savedSeat();
+  if (seat && mode === 'online' && !net) {
+    rejoinAttempts = 1;
+    connectGame({ type: 'rejoin', code: seat.code, token: seat.token });
+  }
 }
 
 // ---------- stale-version banner ----------
