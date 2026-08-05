@@ -116,8 +116,9 @@ The Lambda's role (`ringo-ws-role`, inline policy `ringo-ws-access`) needs
 
 **Monitoring**: CloudWatch alarm `ringo-ws-errors` (us-east-2) fires when the
 Lambda reports any error in a 5-minute window and emails via SNS topic
-`ringo-alerts`. Tests run in GitHub Actions on every push
-(`.github/workflows/test.yml`).
+`ringo-alerts`. AWS Budget `ringo-monthly` emails if spend on resources
+tagged `project=ringo` passes (or is forecast to pass) $5/month. Tests run
+in GitHub Actions on every push (`.github/workflows/test.yml`).
 
 Deploying changes:
 
