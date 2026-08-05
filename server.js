@@ -45,6 +45,37 @@ const server = http.createServer((req, res) => {
   });
 });
 
+// ---------- presence & usage log ----------
+
+const presence = new Set(); // sockets that said 'hello' (one per open page)
+
+// "2026-08-05 14:03:22 CDT" — Intl handles the CST/CDT switch for us.
+function centralTime(d) {
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Chicago',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+    hour12: false, timeZoneName: 'short',
+  }).formatToParts(d).map((p) => [p.type, p.value]));
+  return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}:${parts.second} ${parts.timeZoneName}`;
+}
+
+const USAGE_LOG = path.join(path.dirname(fileURLToPath(import.meta.url)), 'usage.log');
+
+function logVisit(ip) {
+  const now = new Date();
+  const line = `${now.toISOString()}  ${centralTime(now)}  ${ip || 'unknown'}`;
+  console.log(`visit: ${line}`);
+  fs.appendFile(USAGE_LOG, `${line}\n`, (err) => {
+    if (err) console.error('usage log:', err);
+  });
+}
+
+function broadcastPresence() {
+  const msg = { type: 'presence', v: GAME_VERSION, count: presence.size };
+  presence.forEach((ws) => sendTo(ws, msg));
+}
+
 // ---------- rooms ----------
 
 const rooms = new Map(); // code -> room
@@ -108,8 +139,9 @@ function cleanName(raw) {
 
 const wss = new WebSocketServer({ server });
 
-wss.on('connection', (ws) => {
+wss.on('connection', (ws, req) => {
   ws.isAlive = true;
+  ws.ip = req.headers['x-forwarded-for']?.split(',')[0].trim() || req.socket.remoteAddress;
   ws.on('pong', () => { ws.isAlive = true; });
 
   ws.on('message', (raw) => {
@@ -127,13 +159,28 @@ wss.on('connection', (ws) => {
     }
   });
 
-  ws.on('close', () => handleLeave(ws));
+  ws.on('close', () => {
+    if (presence.delete(ws)) broadcastPresence();
+    handleLeave(ws);
+  });
 });
 
 function handleMessage(ws, msg) {
   const room = ws.roomCode ? rooms.get(ws.roomCode) : null;
 
   switch (msg.type) {
+    // Sent once when a page loads: registers this connection as "on the
+    // site", records the visit, and pushes the fresh count to everyone.
+    case 'hello': {
+      presence.add(ws);
+      logVisit(ws.ip);
+      broadcastPresence();
+      break;
+    }
+
+    case 'presence-ping': // keepalive only matters for API Gateway
+      break;
+
     case 'create': {
       if (room) return;
       const r = makeRoom();

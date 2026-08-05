@@ -132,6 +132,32 @@ body {
   margin: 0 0 10px;
 }
 
+.presence {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0 0 14px;
+  padding: 4px 12px;
+  font-size: 0.9rem;
+  opacity: 0.85;
+  background: rgba(0, 0, 0, 0.22);
+  border-radius: 999px;
+}
+
+.presence-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #4ade80;
+  box-shadow: 0 0 6px #4ade80;
+  animation: presence-pulse 2.4s ease-in-out infinite;
+}
+
+@keyframes presence-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+
 .menu-buttons {
   display: flex;
   flex-direction: column;

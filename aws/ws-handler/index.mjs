@@ -2,8 +2,12 @@
 //
 // API Gateway WebSocket routes ($connect / $disconnect / $default) all land
 // here. Room state lives in DynamoDB (single table, on-demand):
-//   ROOM#<code> — players, host, started flag, game state, rematch rotation
-//   CONN#<id>   — reverse lookup so $disconnect can find its room
+//   ROOM#<code>     — players, host, started flag, game state, rematch rotation
+//   CONN#<id>       — reverse lookup so $disconnect can find its room
+//   PRESENCE#<id>   — one per open page (the client says 'hello' on load);
+//                     short TTL, refreshed by keepalive pings, so the live
+//                     "people here now" count self-heals from missed disconnects
+//   LOG#<utc>#<id>  — permanent visit log: UTC + Central time and source IP
 //
 // Writes use optimistic locking: every room carries a `rev` counter and saves
 // are conditional on the rev they read. Simultaneous joins (five family
@@ -14,7 +18,7 @@
 // same rules run in the cloud, in the browser, and in local server.js.
 
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
-import { DynamoDBDocumentClient, GetCommand, PutCommand, DeleteCommand } from '@aws-sdk/lib-dynamodb';
+import { DynamoDBDocumentClient, GetCommand, PutCommand, DeleteCommand, UpdateCommand, ScanCommand } from '@aws-sdk/lib-dynamodb';
 import { ApiGatewayManagementApiClient, PostToConnectionCommand } from '@aws-sdk/client-apigatewaymanagementapi';
 import { GAME_VERSION, newGame, rollDice, applyRoll, applyPlace, isLegal, nextPlayer } from './game.js';
 
@@ -45,7 +49,7 @@ export const handler = async (event) => {
     return { statusCode: 200 };
   }
   try {
-    await onMessage(connId, msg);
+    await onMessage(connId, msg, rc.identity?.sourceIp);
   } catch (e) {
     console.error('message handler:', e);
     await sendTo(connId, { type: 'error', message: 'Something went wrong on the server.' });
@@ -114,6 +118,61 @@ async function mapConnection(connId, code, idx) {
   }));
 }
 
+// ---------- presence & usage log ----------
+
+const PRESENCE_TTL_MIN = 15; // clients ping every 4 min; survives a couple misses
+
+const presenceTtl = () => Math.floor(Date.now() / 1000) + PRESENCE_TTL_MIN * 60;
+
+// "2026-08-05 14:03:22 CDT" — Intl handles the CST/CDT switch for us.
+function centralTime(d) {
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Chicago',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+    hour12: false, timeZoneName: 'short',
+  }).formatToParts(d).map((p) => [p.type, p.value]));
+  return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}:${parts.second} ${parts.timeZoneName}`;
+}
+
+// One log entry per page visit. No ttl attribute, so unlike rooms these
+// items never expire — this is the permanent usage log.
+async function logVisit(connId, ip) {
+  const now = new Date();
+  const utc = now.toISOString();
+  const central = centralTime(now);
+  console.log(`visit: ${utc}  ${central}  ${ip}`);
+  await ddb.send(new PutCommand({
+    TableName: TABLE,
+    Item: { pk: `LOG#${utc}#${connId.slice(0, 8)}`, utc, central, ip: ip || 'unknown' },
+  }));
+}
+
+// Everyone currently on the site (unexpired PRESENCE items).
+async function presenceConnIds() {
+  const now = Math.floor(Date.now() / 1000);
+  const ids = [];
+  let key;
+  do {
+    const r = await ddb.send(new ScanCommand({
+      TableName: TABLE,
+      FilterExpression: 'begins_with(pk, :p) AND #ttl > :now',
+      ExpressionAttributeNames: { '#ttl': 'ttl' },
+      ExpressionAttributeValues: { ':p': 'PRESENCE#', ':now': now },
+      ExclusiveStartKey: key,
+    }));
+    for (const it of r.Items || []) ids.push(it.pk.slice('PRESENCE#'.length));
+    key = r.LastEvaluatedKey;
+  } while (key);
+  return ids;
+}
+
+async function broadcastPresence() {
+  const ids = await presenceConnIds();
+  const msg = { type: 'presence', v: GAME_VERSION, count: ids.length };
+  await Promise.all(ids.map((id) => sendTo(id, msg)));
+}
+
 // ---------- messaging ----------
 
 async function sendTo(connId, msg) {
@@ -157,10 +216,35 @@ const randomCode = () => Array.from({ length: 4 }, () =>
 
 // ---------- message handling ----------
 
-async function onMessage(connId, msg) {
+async function onMessage(connId, msg, ip) {
   switch (msg.type) {
     case 'ping':
       return;
+
+    // Sent once when a page loads: registers this connection as "on the
+    // site", records the visit, and pushes the fresh count to everyone.
+    case 'hello': {
+      await ddb.send(new PutCommand({
+        TableName: TABLE,
+        Item: { pk: `PRESENCE#${connId}`, ttl: presenceTtl() },
+      }));
+      await logVisit(connId, ip);
+      await broadcastPresence();
+      return;
+    }
+
+    // Keepalive from a presence connection — just refresh its TTL.
+    case 'presence-ping': {
+      await ddb.send(new UpdateCommand({
+        TableName: TABLE,
+        Key: { pk: `PRESENCE#${connId}` },
+        UpdateExpression: 'SET #ttl = :t',
+        ConditionExpression: 'attribute_exists(pk)',
+        ExpressionAttributeNames: { '#ttl': 'ttl' },
+        ExpressionAttributeValues: { ':t': presenceTtl() },
+      })).catch(() => {}); // expired-and-swept item; next hello re-registers
+      return;
+    }
 
     case 'create': {
       for (let tries = 0; tries < 10; tries++) {
@@ -307,6 +391,13 @@ async function onMessage(connId, msg) {
 // ---------- disconnect ----------
 
 async function onDisconnect(connId) {
+  // Presence connection closing (tab closed / navigated away)?
+  const pres = await getItem(`PRESENCE#${connId}`);
+  if (pres) {
+    await ddb.send(new DeleteCommand({ TableName: TABLE, Key: { pk: `PRESENCE#${connId}` } }));
+    await broadcastPresence();
+  }
+
   const conn = await getItem(`CONN#${connId}`);
   if (conn) await ddb.send(new DeleteCommand({ TableName: TABLE, Key: { pk: `CONN#${connId}` } }));
   if (!conn) return;

@@ -19,7 +19,11 @@ cat > "$BUILD/js/config.js" <<EOF
 window.RINGO_WS_URL = '$WS_URL';
 EOF
 
-aws s3 sync "$BUILD/" "s3://$BUCKET/" --delete
+# no-cache = browsers must revalidate before reusing a cached copy. Without
+# it they cache heuristically and can keep running old game rules for hours
+# (four-corners didn't work vs. the computer the night it shipped). CloudFront
+# still caches at the edge; the invalidation below refreshes it on deploy.
+aws s3 sync "$BUILD/" "s3://$BUCKET/" --delete --cache-control no-cache
 aws cloudfront create-invalidation --distribution-id "$DIST_ID" --paths '/*' \
   --query 'Invalidation.Id' --output text
 echo "Deployed → https://ringo.beelinemicrosystems.com"

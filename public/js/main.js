@@ -688,6 +688,50 @@ function handleServer(msg) {
 $('btn-lobby-start').addEventListener('click', () => { sfx.click(); send({ type: 'start' }); });
 $('btn-lobby-leave').addEventListener('click', () => { sfx.click(); quitToMenu(); });
 
+// ---------- presence (the "N people here now" badge) ----------
+
+// A second, lightweight socket that lives for the whole visit — separate from
+// the game socket so browsing the menu counts the same as playing. The server
+// answers 'hello' with live count broadcasts and logs the visit.
+
+let presenceRetry = 5000;
+
+function startPresence() {
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  const wsUrl = window.RINGO_WS_URL || `${proto}://${location.host}`;
+  let ws;
+  try {
+    ws = new WebSocket(wsUrl);
+  } catch {
+    return; // opened from disk with no server — no badge, no retries
+  }
+  let keepalive = null;
+
+  ws.onopen = () => {
+    presenceRetry = 5000;
+    ws.send(JSON.stringify({ type: 'hello' }));
+    // API Gateway drops idle sockets after 10 minutes — keep it warm.
+    keepalive = setInterval(() => ws.send(JSON.stringify({ type: 'presence-ping' })), 4 * 60 * 1000);
+  };
+  ws.onmessage = (ev) => {
+    const msg = JSON.parse(ev.data);
+    if (msg.type !== 'presence') return;
+    checkVersion(msg.v);
+    $('presence-count').textContent = msg.count === 1
+      ? 'Just you here right now'
+      : `${msg.count} people here now`;
+    $('presence').classList.remove('hidden');
+  };
+  ws.onerror = () => ws.close();
+  ws.onclose = () => {
+    clearInterval(keepalive);
+    $('presence').classList.add('hidden');
+    setTimeout(startPresence, presenceRetry);
+    presenceRetry = Math.min(presenceRetry * 2, 5 * 60 * 1000);
+  };
+}
+
 // ---------- boot ----------
 
 show('screen-menu');
+startPresence();
