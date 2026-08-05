@@ -483,6 +483,8 @@ $('btn-quit').addEventListener('click', () => { sfx.click(); quitToMenu(); });
 
 function quitToMenu() {
   if (net) { clearInterval(net.keepalive); net.ws.onclose = null; net.ws.close(); net = null; }
+  clearSeat(); // leaving on purpose — don't auto-rejoin this game later
+  rejoinAttempts = 0;
   state = null;
   busy = false;
   $('banner').classList.add('hidden');
@@ -504,16 +506,39 @@ function onlineStatus(text) {
   if (el) el.textContent = text;
 }
 
-function connectOnline(joinCode) {
-  const name = ($('online-name').value.trim() || 'Player').slice(0, 14);
-  localStorage.setItem('ringoName', name);
-  if (joinCode !== null && joinCode.length !== 4) {
-    onlineStatus('Room codes are 4 letters.');
-    return;
-  }
-  sfx.click();
-  onlineStatus('Connecting…');
+// The seat token lets us reclaim our spot in a game after a dropped
+// connection (phone locked, app switched, wifi blip). Rooms expire after
+// 24h, so older saved seats are useless.
+function saveSeat(code, token) {
+  localStorage.setItem('ringoSeat', JSON.stringify({ code, token, ts: Date.now() }));
+}
 
+function savedSeat() {
+  try {
+    const s = JSON.parse(localStorage.getItem('ringoSeat'));
+    if (s && s.code && s.token && Date.now() - s.ts < 24 * 3600 * 1000) return s;
+  } catch { /* corrupt entry */ }
+  return null;
+}
+
+function clearSeat() {
+  localStorage.removeItem('ringoSeat');
+}
+
+let rejoinAttempts = 0;
+
+// Retry a dropped mid-game connection a few times before giving up.
+// Returns false when there's no seat to reclaim or we're out of tries.
+function scheduleRejoin() {
+  const seat = savedSeat();
+  if (!seat || rejoinAttempts >= 5) return false;
+  rejoinAttempts++;
+  setTimeout(() => connectGame({ type: 'rejoin', code: seat.code, token: seat.token }),
+    rejoinAttempts === 1 ? 300 : 2500);
+  return true;
+}
+
+function connectGame(firstMsg) {
   // A deployed copy sets window.RINGO_WS_URL in config.js; local dev uses
   // the same host that served the page (server.js).
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
@@ -530,21 +555,36 @@ function connectOnline(joinCode) {
   const keepalive = setInterval(() => send({ type: 'ping' }), 4 * 60 * 1000);
   net = { ws, code: null, myIndex: null, isHost: false, keepalive };
 
-  ws.onopen = () => {
-    send(joinCode === null ? { type: 'create', name } : { type: 'join', code: joinCode, name });
-  };
+  ws.onopen = () => send(firstMsg);
   ws.onerror = () => onlineStatus('Could not connect. Run the game with "npm start" to play online.');
   ws.onclose = () => {
     clearInterval(keepalive);
-    if (mode === 'online' && state && state.phase !== 'over') {
+    net = null;
+    const inGame = mode === 'online' && state && state.phase !== 'over';
+    if (inGame && scheduleRejoin()) {
+      setMessage('Connection lost — reconnecting…');
+      return;
+    }
+    if (inGame) {
       showBanner('OOPS', 'Connection lost. Head back to the menu.', null);
       $('btn-banner-again').classList.add('hidden');
     } else if (!$('screen-lobby').classList.contains('hidden')) {
       show('screen-menu');
     }
-    net = null;
   };
   ws.onmessage = (ev) => handleServer(JSON.parse(ev.data));
+}
+
+function connectOnline(joinCode) {
+  const name = ($('online-name').value.trim() || 'Player').slice(0, 14);
+  localStorage.setItem('ringoName', name);
+  if (joinCode !== null && joinCode.length !== 4) {
+    onlineStatus('Room codes are 4 letters.');
+    return;
+  }
+  sfx.click();
+  onlineStatus('Connecting…');
+  connectGame(joinCode === null ? { type: 'create', name } : { type: 'join', code: joinCode, name });
 }
 
 function send(msg) {
@@ -576,10 +616,40 @@ function handleServer(msg) {
       $('lobby-status').textContent = msg.message;
       break;
 
+    // We're back in our seat after a dropped connection — restore identity
+    // and jump straight to the board (the state broadcast follows).
+    case 'rejoined': {
+      mode = 'online';
+      rejoinAttempts = 0;
+      net.code = msg.code;
+      net.myIndex = msg.you;
+      net.isHost = msg.you === msg.host;
+      saveSeat(msg.code, msg.token);
+      buildBoard();
+      $('banner').classList.add('hidden');
+      confettiStop($('confetti'));
+      show('screen-game');
+      break;
+    }
+
+    // Room expired, game over and gone, or the token didn't match.
+    case 'rejoin-failed': {
+      clearSeat();
+      const wasInGame = mode === 'online' && state && state.phase !== 'over';
+      if (net) { net.ws.onclose = null; net.ws.close(); clearInterval(net.keepalive); net = null; }
+      if (wasInGame) {
+        showBanner('OOPS', 'Connection lost. Head back to the menu.', null);
+        $('btn-banner-again').classList.add('hidden');
+      }
+      break;
+    }
+
     case 'lobby': {
       net.code = msg.code;
       net.myIndex = msg.you;
       net.isHost = msg.you === msg.host;
+      rejoinAttempts = 0;
+      if (msg.token) saveSeat(msg.code, msg.token);
       $('lobby-code').textContent = msg.code;
       const list = $('lobby-players');
       list.innerHTML = '';
@@ -622,7 +692,7 @@ function handleServer(msg) {
         confettiStop($('confetti'));
         show('screen-game');
         renderAll();
-        if (myTurn()) sfx.yourTurn();
+        if (myTurn()) { sfx.yourTurn(); notifyTurn(); }
         break;
       }
 
@@ -658,7 +728,7 @@ function handleServer(msg) {
             setMessage(`${ev.by} stole the spot from ${state.players[ev.stolen].name}!`);
             setTimeout(() => renderAll(), 2000);
           }
-          if (myTurn() && state.phase === 'roll') sfx.yourTurn();
+          if (myTurn() && state.phase === 'roll') { sfx.yourTurn(); notifyTurn(); }
         }
         break;
       }
@@ -667,6 +737,23 @@ function handleServer(msg) {
         renderAll();
         setMessage(`${ev.name} left the game.`);
         setTimeout(() => renderAll(), 2000);
+        break;
+      }
+
+      if (ev.kind === 'rejoined') {
+        renderAll();
+        // A rejoiner landing on a finished game should still see the result.
+        if (state.phase === 'over') {
+          showBanner('RINGO!', `${state.players[state.winner].name} wins!`, state.winner);
+        } else {
+          setMessage(`${ev.name} is back!`);
+          setTimeout(() => renderAll(), 2000);
+          // If it's the rejoiner's own turn, let them know right away.
+          if (myTurn() && ev.name === state.players[net.myIndex].name) {
+            sfx.yourTurn();
+            notifyTurn();
+          }
+        }
         break;
       }
 
@@ -687,6 +774,54 @@ function handleServer(msg) {
 
 $('btn-lobby-start').addEventListener('click', () => { sfx.click(); send({ type: 'start' }); });
 $('btn-lobby-leave').addEventListener('click', () => { sfx.click(); quitToMenu(); });
+
+// One tap to text the room to the family: native share sheet where the
+// browser has one (phones), clipboard everywhere else.
+$('btn-lobby-share').addEventListener('click', async () => {
+  sfx.click();
+  if (!net?.code) return;
+  const url = `${location.origin}${location.pathname}?join=${net.code}`;
+  if (navigator.share) {
+    try { await navigator.share({ title: 'RINGO', text: 'Join my RINGO game!', url }); } catch { /* user closed the sheet */ }
+    return;
+  }
+  try {
+    await navigator.clipboard.writeText(url);
+    $('lobby-status').textContent = 'Invite link copied — paste it to your family!';
+  } catch {
+    $('lobby-status').textContent = url; // last resort: show it
+  }
+});
+
+// ---------- turn nudges ----------
+
+// When your turn arrives in an online game, buzz the phone and — if the tab
+// is in the background — flash the title until you come back.
+
+const BASE_TITLE = document.title;
+let titleFlash = null;
+
+function notifyTurn() {
+  navigator.vibrate?.([100, 60, 100]);
+  if (document.hidden && !titleFlash) {
+    let on = false;
+    titleFlash = setInterval(() => {
+      on = !on;
+      document.title = on ? '🎲 YOUR TURN — RINGO!' : BASE_TITLE;
+    }, 1000);
+  }
+}
+
+function stopTitleFlash() {
+  if (!titleFlash) return;
+  clearInterval(titleFlash);
+  titleFlash = null;
+  document.title = BASE_TITLE;
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) stopTitleFlash();
+});
 
 // ---------- presence (the "N people here now" badge) ----------
 
@@ -735,3 +870,21 @@ function startPresence() {
 
 show('screen-menu');
 startPresence();
+
+// Invite link (?join=CODE): jump straight into that room. If we already know
+// this player's name, join immediately; otherwise show setup with the code
+// filled in. A fresh invite outranks any old saved seat.
+const inviteCode = (new URLSearchParams(location.search).get('join') || '').toUpperCase();
+if (inviteCode) history.replaceState({}, '', location.pathname); // don't rejoin on refresh
+if (/^[A-Z]{4}$/.test(inviteCode)) {
+  clearSeat();
+  openSetup('online');
+  $('online-code').value = inviteCode;
+  if (savedName()) connectOnline(inviteCode);
+} else if (savedSeat()) {
+  // A game was in progress the last time this page closed — try to sit
+  // back down. On 'rejoined' we jump to the board; on 'rejoin-failed' the
+  // seat is cleared and the menu simply stays put.
+  const seat = savedSeat();
+  connectGame({ type: 'rejoin', code: seat.code, token: seat.token });
+}

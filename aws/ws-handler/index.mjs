@@ -195,6 +195,7 @@ async function broadcastLobby(room) {
     code: room.code,
     you: i,
     host: room.host,
+    token: p.token, // secret; lets this player rejoin later
     players: room.players.map((q) => ({ name: q.name })),
   })));
 }
@@ -253,7 +254,7 @@ async function onMessage(connId, msg, ip) {
           pk: `ROOM#${code}`,
           code,
           rev: 0,
-          players: [{ name: cleanName(msg.name), connectionId: connId, disconnected: false }],
+          players: [{ name: cleanName(msg.name), connectionId: connId, disconnected: false, token: crypto.randomUUID() }],
           host: 0,
           started: false,
           state: null,
@@ -280,7 +281,7 @@ async function onMessage(connId, msg, ip) {
           err = `That room is full (${MAX_ROOM_PLAYERS} players max).`;
           return false;
         }
-        r.players.push({ name: cleanName(msg.name), connectionId: connId, disconnected: false });
+        r.players.push({ name: cleanName(msg.name), connectionId: connId, disconnected: false, token: crypto.randomUUID() });
         seat = r.players.length - 1;
         return true;
       });
@@ -288,6 +289,32 @@ async function onMessage(connId, msg, ip) {
       if (out === false) return sendTo(connId, { type: 'error', message: err });
       await mapConnection(connId, code, seat);
       await broadcastLobby(room);
+      return;
+    }
+
+    // A player whose connection dropped mid-game reclaims their seat by
+    // presenting the seat token they got when they first joined.
+    case 'rejoin': {
+      const code = String(msg.code || '').toUpperCase();
+      const token = String(msg.token || '');
+      let seat = -1;
+      let name = null;
+      const { room, out } = await mutateRoom(code, (r) => {
+        seat = token ? r.players.findIndex((p) => p.token === token) : -1;
+        if (!r.started || seat === -1) return false;
+        r.players[seat].connectionId = connId;
+        r.players[seat].disconnected = false;
+        r.state.players[seat].disconnected = false;
+        name = r.players[seat].name;
+        return true;
+      });
+      if (!room || out !== true) return sendTo(connId, { type: 'rejoin-failed', v: GAME_VERSION });
+      await mapConnection(connId, code, seat);
+      await sendTo(connId, {
+        type: 'rejoined', v: GAME_VERSION,
+        code, you: seat, host: room.host, token,
+      });
+      await broadcastState(room, { kind: 'rejoined', name });
       return;
     }
   }

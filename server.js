@@ -122,6 +122,7 @@ function broadcastLobby(room) {
       code: room.code,
       you: i,
       host: room.host,
+      token: room.players[i].token, // secret; lets this player rejoin later
       players: room.players.map((p) => ({ name: p.name })),
     });
   });
@@ -184,7 +185,7 @@ function handleMessage(ws, msg) {
     case 'create': {
       if (room) return;
       const r = makeRoom();
-      r.players.push({ name: cleanName(msg.name) });
+      r.players.push({ name: cleanName(msg.name), token: crypto.randomUUID() });
       r.sockets.push(ws);
       ws.roomCode = r.code;
       ws.playerIdx = 0;
@@ -198,11 +199,36 @@ function handleMessage(ws, msg) {
       if (!r) return sendTo(ws, { type: 'error', message: 'No room with that code.' });
       if (r.started) return sendTo(ws, { type: 'error', message: 'That game already started.' });
       if (r.players.length >= 5) return sendTo(ws, { type: 'error', message: 'That room is full (5 players max).' });
-      r.players.push({ name: cleanName(msg.name) });
+      r.players.push({ name: cleanName(msg.name), token: crypto.randomUUID() });
       r.sockets.push(ws);
       ws.roomCode = r.code;
       ws.playerIdx = r.players.length - 1;
       broadcastLobby(r);
+      break;
+    }
+
+    // A player whose connection dropped mid-game reclaims their seat by
+    // presenting the seat token they got when they first joined.
+    case 'rejoin': {
+      if (room) return; // this socket is already seated somewhere
+      const r = rooms.get(String(msg.code || '').toUpperCase());
+      const token = String(msg.token || '');
+      const idx = r && token ? r.players.findIndex((p) => p.token === token) : -1;
+      if (!r || !r.started || idx === -1) {
+        return sendTo(ws, { type: 'rejoin-failed', v: GAME_VERSION });
+      }
+      const old = r.sockets[idx];
+      if (old && old !== ws) { old.roomCode = null; old.close(); } // stale socket
+      r.sockets[idx] = ws;
+      ws.roomCode = r.code;
+      ws.playerIdx = idx;
+      r.players[idx].disconnected = false;
+      r.state.players[idx].disconnected = false;
+      sendTo(ws, {
+        type: 'rejoined', v: GAME_VERSION,
+        code: r.code, you: idx, host: r.host, token,
+      });
+      broadcastState(r, { kind: 'rejoined', name: r.players[idx].name });
       break;
     }
 
