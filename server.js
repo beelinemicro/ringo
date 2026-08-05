@@ -198,6 +198,21 @@ function handleMessage(ws, msg) {
       break;
     }
 
+    case 'rename': {
+      if (!room) return;
+      const idx = ws.playerIdx;
+      const p = room.players[idx];
+      if (!p || p.disconnected) return;
+      const from = p.name;
+      const to = cleanName(msg.name);
+      if (to === from) return;
+      p.name = to;
+      if (room.started && room.state.players[idx]) room.state.players[idx].name = to;
+      if (!room.started) broadcastLobby(room);
+      else broadcastState(room, { kind: 'rename', from, to });
+      break;
+    }
+
     case 'again': {
       if (!room?.started || room.state.phase !== 'over') return;
       if (ws.playerIdx !== room.host) return;

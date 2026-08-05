@@ -214,8 +214,33 @@ function renderChips() {
     const you = mode === 'online' && i === net.myIndex ? ' (you)' : '';
     const bot = p.isBot ? ' 🤖' : '';
     chip.innerHTML = `<span class="chip-ring" style="border-color:${COLORS[i].hex}"></span>${p.name}${you}${bot}`;
+    const canRename = !p.disconnected &&
+      (mode === 'online' ? i === net.myIndex : !p.isBot);
+    if (canRename) {
+      chip.classList.add('editable');
+      chip.title = 'Tap to rename';
+      chip.innerHTML += '<span class="pencil">✏️</span>';
+      chip.addEventListener('click', () => renamePlayer(i));
+    }
     wrap.appendChild(chip);
   });
+}
+
+function renamePlayer(i) {
+  const current = state.players[i].name;
+  const entered = prompt('New name:', current);
+  if (entered === null) return;
+  const name = entered.trim().slice(0, 14);
+  if (!name || name === current) return;
+  sfx.click();
+  if (mode === 'online') {
+    localStorage.setItem('ringoName', name);
+    send({ type: 'rename', name });
+    return; // the server broadcasts the updated roster
+  }
+  if (mode === 'ai' && i === 0) localStorage.setItem('ringoName', name);
+  state.players[i].name = name;
+  renderAll();
 }
 
 function renderBoard() {
@@ -561,6 +586,20 @@ function handleServer(msg) {
       msg.players.forEach((p, i) => {
         const li = document.createElement('li');
         li.innerHTML = `${colorDot(i)}${p.name}${i === msg.host ? ' 👑' : ''}${i === msg.you ? ' (you)' : ''}`;
+        if (i === msg.you) {
+          li.classList.add('editable');
+          li.title = 'Tap to rename';
+          li.innerHTML += '<span class="pencil">✏️</span>';
+          li.addEventListener('click', () => {
+            const entered = prompt('New name:', p.name);
+            if (entered === null) return;
+            const name = entered.trim().slice(0, 14);
+            if (!name || name === p.name) return;
+            sfx.click();
+            localStorage.setItem('ringoName', name);
+            send({ type: 'rename', name });
+          });
+        }
         list.appendChild(li);
       });
       $('btn-lobby-start').classList.toggle('hidden', !net.isHost);
@@ -627,6 +666,13 @@ function handleServer(msg) {
       if (ev.kind === 'left') {
         renderAll();
         setMessage(`${ev.name} left the game.`);
+        setTimeout(() => renderAll(), 2000);
+        break;
+      }
+
+      if (ev.kind === 'rename') {
+        renderAll();
+        setMessage(`${ev.from} is now ${ev.to}.`);
         setTimeout(() => renderAll(), 2000);
         break;
       }

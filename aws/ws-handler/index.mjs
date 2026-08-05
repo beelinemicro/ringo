@@ -266,6 +266,26 @@ async function onMessage(connId, msg) {
       return;
     }
 
+    case 'rename': {
+      let evt = null;
+      const { room, out } = await mutateRoom(conn.code, (r) => {
+        evt = null;
+        const p = r.players[idx];
+        if (!p || p.disconnected) return false;
+        const to = cleanName(msg.name);
+        if (to === p.name) return false;
+        evt = { kind: 'rename', from: p.name, to };
+        p.name = to;
+        if (r.started && r.state.players[idx]) r.state.players[idx].name = to;
+        return true;
+      });
+      if (room && out === true) {
+        if (!room.started) await broadcastLobby(room);
+        else await broadcastState(room, evt);
+      }
+      return;
+    }
+
     case 'again': {
       const { room, out } = await mutateRoom(conn.code, (r) => {
         if (!r.started || r.state.phase !== 'over' || idx !== r.host) return false;

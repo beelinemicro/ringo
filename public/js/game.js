@@ -11,11 +11,11 @@
 //  - A wild is powerful: it lets you place on any open matching space OR
 //    steal any opponent ring the dice can reach.
 //  - First player with five same-colored rings in a row (across, down, or
-//    diagonal) shouts "RINGO!" and wins.
+//    diagonal) — or all FOUR CORNERS — shouts "RINGO!" and wins.
 
 // Bump this whenever the rules change. Servers stamp it on every message;
 // clients that see a newer number show the "refresh for new rules" banner.
-export const GAME_VERSION = 3;
+export const GAME_VERSION = 4;
 
 export const SIZE = 5;
 export const WILD = 'W';
@@ -94,8 +94,13 @@ export const ALL_LINES = (() => {
   return lines;
 })();
 
+export const CORNERS = [[0, 0], [0, SIZE - 1], [SIZE - 1, 0], [SIZE - 1, SIZE - 1]];
+
+// Every way to win: the twelve 5-in-a-row lines, plus the four corners.
+export const WIN_LINES = [...ALL_LINES, CORNERS];
+
 export function winLineFor(board, player) {
-  return ALL_LINES.find((line) => line.every(([r, c]) => board[r][c] === player)) || null;
+  return WIN_LINES.find((line) => line.every(([r, c]) => board[r][c] === player)) || null;
 }
 
 export function nextPlayer(state) {

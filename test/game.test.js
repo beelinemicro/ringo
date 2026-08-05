@@ -171,6 +171,32 @@ for (let i = 0; i < 500; i++) {
   assert.equal(s.current, 0, 'turn is never forfeited');
 }
 
+// --- four corners wins ---
+{
+  const s = fresh();
+  s.board[0][0] = 0;
+  s.board[0][4] = 0;
+  s.board[4][0] = 0;
+  assert.equal(winLineFor(s.board, 0), null, 'three corners is not a win');
+  applyRoll(s, { col: 4, row: 4 });
+  const { result } = applyPlace(s, 4, 4);
+  assert.equal(result, 'win', 'fourth corner wins');
+  assert.equal(s.winner, 0);
+  assert.equal(s.winLine.length, 4, 'corner win line has 4 cells');
+}
+{
+  const s = fresh();
+  s.board[0][0] = 0;
+  s.board[0][4] = 0;
+  s.board[4][0] = 0;
+  s.board[4][4] = 1; // opponent holds the last corner
+  assert.equal(winLineFor(s.board, 0), null, 'opponent corner blocks the win');
+  assert.equal(applyRoll(s, { col: 4, row: 4 }), 'blocked');
+  const { result, stolen } = applyPlace(s, 4, 4);
+  assert.equal(result, 'win', 'stealing the last corner wins');
+  assert.equal(stolen, 1);
+}
+
 // --- five players (Black is player index 4) ---
 {
   const s = newGame([{ name: 'A' }, { name: 'B' }, { name: 'C' }, { name: 'D' }, { name: 'E' }]);

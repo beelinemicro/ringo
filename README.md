@@ -9,8 +9,8 @@ RINGO is played on a 5×5 board. The columns are lettered **R-I-N-G-O** across t
 top, and the rows are numbered **1–5** down the side. Roll two dice — one with
 the letters R, I, N, G, O, the other with the numbers 1–5, each with one **★ wild**
 face — and place a ring of your color where the letter and number meet. The first
-player to line up **five rings in a row** (across, down, or diagonally) shouts
-**"RINGO!"** and wins.
+player to line up **five rings in a row** (across, down, or diagonally) — or grab
+**all four corners** — shouts **"RINGO!"** and wins.
 
 ## Playing
 
@@ -39,8 +39,8 @@ Then open **http://localhost:3000**. Three ways to play:
    the spot** (their ring comes off, yours goes on) or **roll again**. If it's
    your **own ring**, you just roll again. You never lose your turn.
 5. First to five same-colored rings in a row — across, down, or diagonal —
-   shouts **"RINGO!"** and wins. Thanks to stealing, a full board never ends
-   the game — it just gets more cutthroat.
+   **or all four corners** — shouts **"RINGO!"** and wins. Thanks to stealing,
+   a full board never ends the game — it just gets more cutthroat.
 
 ## AWS deployment (ringo.beelinemicrosystems.com)
 
