@@ -12,6 +12,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
 import { GAME_VERSION, newGame, rollDice, applyRoll, applyPlace, isLegal, nextPlayer } from './public/js/game.js';
+import { chooseCell, chooseSteal } from './public/js/ai.js';
 
 const PORT = process.env.PORT || 3000;
 const PUBLIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'public');
@@ -76,6 +77,42 @@ function broadcastPresence() {
   presence.forEach((ws) => sendTo(ws, msg));
 }
 
+// ---------- hall of fame ----------
+
+const STATS_FILE = path.join(path.dirname(fileURLToPath(import.meta.url)), 'stats.json');
+
+let stats = {};
+try { stats = JSON.parse(fs.readFileSync(STATS_FILE, 'utf8')); } catch { /* first run */ }
+
+function topStats() {
+  return Object.values(stats)
+    .sort((a, b) => b.wins - a.wins || a.losses - b.losses)
+    .slice(0, 5);
+}
+
+// Menus refresh live: everyone on the site gets the new standings the
+// moment a game ends.
+function broadcastStats() {
+  const msg = { type: 'stats', v: GAME_VERSION, top: topStats() };
+  presence.forEach((ws) => sendTo(ws, msg));
+}
+
+function recordResult(room) {
+  room.state.players.forEach((p, i) => {
+    if (p.isBot) return; // bots never make the board
+    const key = p.name.trim().toLowerCase();
+    if (!key) return;
+    const s = stats[key] || (stats[key] = { name: p.name, wins: 0, losses: 0 });
+    s.name = p.name; // keep the latest capitalization
+    if (i === room.state.winner) s.wins++;
+    else s.losses++;
+  });
+  fs.writeFile(STATS_FILE, JSON.stringify(stats, null, 2), (err) => {
+    if (err) console.error('stats:', err);
+  });
+  broadcastStats();
+}
+
 // ---------- rooms ----------
 
 const rooms = new Map(); // code -> room
@@ -123,7 +160,7 @@ function broadcastLobby(room) {
       you: i,
       host: room.host,
       token: room.players[i].token, // secret; lets this player rejoin later
-      players: room.players.map((p) => ({ name: p.name, away: !!p.disconnected })),
+      players: room.players.map((p) => ({ name: p.name, away: !!p.disconnected, isBot: !!p.isBot })),
     });
   });
 }
@@ -134,6 +171,48 @@ function broadcastState(room, event) {
 
 function cleanName(raw) {
   return String(raw || 'Player').replace(/[^\w !?'.-]/g, '').trim().slice(0, 14) || 'Player';
+}
+
+// ---------- bots ----------
+
+const BOT_NAMES = ['Chip', 'Sparky', 'Gizmo', 'Bolt'];
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// Plays out consecutive bot turns, broadcasting each roll and placement so
+// clients animate them exactly like human moves.
+async function runBots(room) {
+  if (room.botsBusy) return; // one driver per room at a time
+  room.botsBusy = true;
+  try {
+    while (rooms.has(room.code) && room.started && room.state.phase !== 'over') {
+      const st = room.state;
+      const bot = room.players[st.current];
+      if (!bot?.isBot) return;
+      if (!room.players.some((p, i) => !p.isBot && room.sockets[i])) return; // nobody watching
+      await sleep(850);
+      if (!rooms.has(room.code) || !room.started || st !== room.state || st.phase === 'over') return;
+
+      let cell = null;
+      if (st.phase === 'place') cell = chooseCell(st);
+      else if (st.phase === 'blocked') cell = chooseSteal(st);
+
+      let event;
+      if (cell) {
+        const { result, stolen } = applyPlace(st, cell[0], cell[1]);
+        event = { kind: result === 'next' ? 'place' : result, cell, stolen, by: bot.name };
+      } else {
+        // 'roll' phase, or blocked and not worth stealing — roll (again).
+        const dice = rollDice();
+        const result = applyRoll(st, dice);
+        event = { kind: result === 'place' ? 'roll' : result, dice, by: bot.name };
+      }
+      broadcastState(room, event);
+      if (event.kind === 'win') return recordResult(room);
+    }
+  } finally {
+    room.botsBusy = false;
+  }
 }
 
 // ---------- websocket handling ----------
@@ -176,6 +255,7 @@ function handleMessage(ws, msg) {
       presence.add(ws);
       logVisit(ws.ip);
       broadcastPresence();
+      sendTo(ws, { type: 'stats', v: GAME_VERSION, top: topStats() });
       break;
     }
 
@@ -233,6 +313,30 @@ function handleMessage(ws, msg) {
       break;
     }
 
+    // Host fills an empty seat with a computer player.
+    case 'addbot': {
+      if (!room || room.started || ws.playerIdx !== room.host) return;
+      if (room.players.length >= 5) return;
+      const name = BOT_NAMES.find((n) => !room.players.some((p) => p.name === n));
+      if (!name) return;
+      room.players.push({ name, isBot: true });
+      room.sockets.push(null);
+      broadcastLobby(room);
+      break;
+    }
+
+    case 'removebot': {
+      if (!room || room.started || ws.playerIdx !== room.host) return;
+      const bi = Number(msg.i);
+      if (!room.players[bi]?.isBot) return;
+      room.players.splice(bi, 1);
+      room.sockets.splice(bi, 1);
+      room.sockets.forEach((s, i) => { if (s) s.playerIdx = i; });
+      if (bi < room.host) room.host -= 1;
+      broadcastLobby(room);
+      break;
+    }
+
     // Deliberately giving up a lobby seat (the Leave button). A silent
     // disconnect keeps the seat instead — phones drop the socket the moment
     // the browser is backgrounded (e.g. to text the invite link).
@@ -272,8 +376,9 @@ function handleMessage(ws, msg) {
       }
       room.firstPlayer %= room.players.length;
       room.started = true;
-      room.state = newGame(room.players.map((p) => ({ name: p.name })), room.firstPlayer);
+      room.state = newGame(room.players.map((p) => ({ name: p.name, isBot: p.isBot })), room.firstPlayer);
       broadcastState(room, { kind: 'start' });
+      runBots(room);
       break;
     }
 
@@ -303,6 +408,8 @@ function handleMessage(ws, msg) {
       const by = room.players[ws.playerIdx].name;
       const { result, stolen } = applyPlace(room.state, r, c);
       broadcastState(room, { kind: result === 'next' ? 'place' : result, cell: [r, c], stolen, by });
+      if (result === 'win') recordResult(room);
+      else runBots(room);
       break;
     }
 
@@ -325,11 +432,12 @@ function handleMessage(ws, msg) {
       if (!room?.started || room.state.phase !== 'over') return;
       if (ws.playerIdx !== room.host) return;
       room.firstPlayer = (room.firstPlayer + 1) % room.players.length;
-      const players = room.players.map((p) => ({ name: p.name, disconnected: p.disconnected }));
+      const players = room.players.map((p) => ({ name: p.name, isBot: p.isBot, disconnected: p.disconnected }));
       room.state = newGame(players, room.firstPlayer);
       // Don't hand the first turn to someone who already left.
       if (room.state.players[room.state.current].disconnected) nextPlayer(room.state);
       broadcastState(room, { kind: 'start' });
+      runBots(room);
       break;
     }
   }
@@ -370,6 +478,7 @@ function handleLeave(ws) {
     room.state.dice = null;
   }
   broadcastState(room, { kind: 'left', name });
+  runBots(room); // the departed player's turn may pass to a bot
 }
 
 // Reclaim rooms where every seat has been empty for an hour — nobody is

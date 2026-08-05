@@ -21,6 +21,7 @@ import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient, GetCommand, PutCommand, DeleteCommand, UpdateCommand, ScanCommand } from '@aws-sdk/lib-dynamodb';
 import { ApiGatewayManagementApiClient, PostToConnectionCommand } from '@aws-sdk/client-apigatewaymanagementapi';
 import { GAME_VERSION, newGame, rollDice, applyRoll, applyPlace, isLegal, nextPlayer } from './game.js';
+import { chooseCell, chooseSteal } from './ai.js';
 
 const TABLE = process.env.RINGO_TABLE || 'ringo';
 const TTL_HOURS = 24;
@@ -209,6 +210,102 @@ function cleanName(raw) {
   return String(raw || 'Player').replace(/[^\w !?'.-]/g, '').trim().slice(0, 14) || 'Player';
 }
 
+// ---------- bots ----------
+
+const BOT_NAMES = ['Chip', 'Sparky', 'Gizmo', 'Bolt'];
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// Plays out consecutive bot turns, broadcasting each roll and placement so
+// clients animate them exactly like human moves. Runs inside whatever
+// invocation triggered the bot's turn; the step cap keeps a long chain of
+// bot turns safely inside the Lambda timeout — if it's ever hit, the next
+// message from any player (including keepalive pings) picks the chain up.
+async function runBots(code) {
+  for (let step = 0; step < 18; step++) {
+    const peek = await getRoom(code);
+    if (!peek || !peek.started || peek.state.phase === 'over') return;
+    if (!peek.players[peek.state.current]?.isBot) return;
+    if (!peek.players.some((p) => !p.isBot && !p.disconnected)) return; // nobody watching
+    await sleep(850);
+
+    let event = null;
+    const { room, out } = await mutateRoom(code, (r) => {
+      event = null;
+      if (!r.started || r.state.phase === 'over') return false;
+      const bot = r.players[r.state.current];
+      if (!bot?.isBot) return false;
+      const st = r.state;
+      if (st.phase === 'place' || st.phase === 'blocked') {
+        const cell = st.phase === 'place' ? chooseCell(st) : chooseSteal(st);
+        if (cell) {
+          const { result, stolen } = applyPlace(st, cell[0], cell[1]);
+          event = { kind: result === 'next' ? 'place' : result, cell, stolen, by: bot.name };
+          return true;
+        }
+        // Blocked and not worth stealing — fall through to a fresh roll.
+      }
+      const dice = rollDice();
+      const result = applyRoll(st, dice);
+      event = { kind: result === 'place' ? 'roll' : result, dice, by: bot.name };
+      return true;
+    });
+    if (!room || out !== true) return;
+    await broadcastState(room, event);
+    if (event.kind === 'win') return recordResult(room);
+  }
+}
+
+// ---------- hall of fame ----------
+
+// One STAT#<name> item per family member (online games only; bots never
+// make the board). No ttl — like the visit log, these are permanent.
+async function recordResult(room) {
+  const winner = room.state.winner;
+  await Promise.all(room.state.players.map((p, i) => {
+    if (p.isBot) return null;
+    const key = p.name.trim().toLowerCase();
+    if (!key) return null;
+    return ddb.send(new UpdateCommand({
+      TableName: TABLE,
+      Key: { pk: `STAT#${key}` },
+      UpdateExpression: 'SET #n = :n ADD wins :w, losses :l',
+      ExpressionAttributeNames: { '#n': 'name' },
+      ExpressionAttributeValues: {
+        ':n': p.name,
+        ':w': i === winner ? 1 : 0,
+        ':l': i === winner ? 0 : 1,
+      },
+    }));
+  }));
+  await broadcastStats();
+}
+
+async function topStats() {
+  const items = [];
+  let key;
+  do {
+    const r = await ddb.send(new ScanCommand({
+      TableName: TABLE,
+      FilterExpression: 'begins_with(pk, :p)',
+      ExpressionAttributeValues: { ':p': 'STAT#' },
+      ExclusiveStartKey: key,
+    }));
+    items.push(...(r.Items || []));
+    key = r.LastEvaluatedKey;
+  } while (key);
+  items.sort((a, b) => (b.wins || 0) - (a.wins || 0) || (a.losses || 0) - (b.losses || 0));
+  return items.slice(0, 5).map((s) => ({ name: s.name, wins: s.wins || 0, losses: s.losses || 0 }));
+}
+
+// Menus refresh live: everyone on the site gets the new standings the
+// moment a game ends.
+async function broadcastStats() {
+  const [top, ids] = await Promise.all([topStats(), presenceConnIds()]);
+  const msg = { type: 'stats', v: GAME_VERSION, top };
+  await Promise.all(ids.map((id) => sendTo(id, msg)));
+}
+
 // No ambiguous letters (I/L/O look like 1/0).
 const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ';
 
@@ -219,9 +316,6 @@ const randomCode = () => Array.from({ length: 4 }, () =>
 
 async function onMessage(connId, msg, ip) {
   switch (msg.type) {
-    case 'ping':
-      return;
-
     // Sent once when a page loads: registers this connection as "on the
     // site", records the visit, and pushes the fresh count to everyone.
     case 'hello': {
@@ -231,6 +325,7 @@ async function onMessage(connId, msg, ip) {
       }));
       await logVisit(connId, ip);
       await broadcastPresence();
+      await sendTo(connId, { type: 'stats', v: GAME_VERSION, top: await topStats() });
       return;
     }
 
@@ -326,6 +421,43 @@ async function onMessage(connId, msg, ip) {
   const idx = conn.idx;
 
   switch (msg.type) {
+    // Game-socket keepalive — also nudges a stalled bot chain back to life
+    // (e.g. if a previous invocation hit the step cap).
+    case 'ping':
+      return runBots(conn.code);
+
+    // Host fills an empty seat with a computer player.
+    case 'addbot': {
+      const { room, out } = await mutateRoom(conn.code, (r) => {
+        if (r.started || idx !== r.host) return false;
+        if (r.players.length >= MAX_ROOM_PLAYERS) return false;
+        const name = BOT_NAMES.find((n) => !r.players.some((p) => p.name === n));
+        if (!name) return false;
+        r.players.push({ name, isBot: true, connectionId: null, disconnected: false });
+        return true;
+      });
+      if (room && out === true) await broadcastLobby(room);
+      return;
+    }
+
+    case 'removebot': {
+      const bi = Number(msg.i);
+      const { room, out } = await mutateRoom(conn.code, (r) => {
+        if (r.started || idx !== r.host) return false;
+        if (!r.players[bi]?.isBot) return false;
+        r.players.splice(bi, 1);
+        if (bi < r.host) r.host -= 1;
+        return true;
+      });
+      if (room && out === true) {
+        // Seats shifted — refresh every remaining connection's mapping.
+        await Promise.all(room.players.map((p, i) =>
+          p.connectionId ? mapConnection(p.connectionId, room.code, i) : null));
+        await broadcastLobby(room);
+      }
+      return;
+    }
+
     case 'start': {
       const { room, out } = await mutateRoom(conn.code, (r) => {
         if (r.started || idx !== r.host) return false;
@@ -336,13 +468,15 @@ async function onMessage(connId, msg, ip) {
         if (r.players.length < 2) return false;
         r.firstPlayer %= r.players.length;
         r.started = true;
-        r.state = newGame(r.players.map((p) => ({ name: p.name })), r.firstPlayer);
+        r.state = newGame(r.players.map((p) => ({ name: p.name, isBot: p.isBot })), r.firstPlayer);
         return true;
       });
       if (room && out === true) {
         // Pruning may have re-numbered seats — refresh every mapping.
-        await Promise.all(room.players.map((p, i) => mapConnection(p.connectionId, room.code, i)));
+        await Promise.all(room.players.map((p, i) =>
+          p.connectionId ? mapConnection(p.connectionId, room.code, i) : null));
         await broadcastState(room, { kind: 'start' });
+        await runBots(conn.code);
       }
       return;
     }
@@ -408,7 +542,11 @@ async function onMessage(connId, msg, ip) {
         };
         return true;
       });
-      if (room && out === true) await broadcastState(room, event);
+      if (room && out === true) {
+        await broadcastState(room, event);
+        if (event.kind === 'win') await recordResult(room);
+        else await runBots(conn.code);
+      }
       return;
     }
 
@@ -437,14 +575,17 @@ async function onMessage(connId, msg, ip) {
         if (!r.started || r.state.phase !== 'over' || idx !== r.host) return false;
         r.firstPlayer = (r.firstPlayer + 1) % r.players.length;
         r.state = newGame(
-          r.players.map((p) => ({ name: p.name, disconnected: p.disconnected })),
+          r.players.map((p) => ({ name: p.name, isBot: p.isBot, disconnected: p.disconnected })),
           r.firstPlayer,
         );
         // Don't hand the first turn to someone who already left.
         if (r.state.players[r.state.current].disconnected) nextPlayer(r.state);
         return true;
       });
-      if (room && out === true) await broadcastState(room, { kind: 'start' });
+      if (room && out === true) {
+        await broadcastState(room, { kind: 'start' });
+        await runBots(conn.code);
+      }
       return;
     }
   }
@@ -503,5 +644,8 @@ async function onDisconnect(connId) {
 
   if (!room || out !== true) return;
   if (mode === 'lobby') await broadcastLobby(room);
-  else if (mode === 'game') await broadcastState(room, { kind: 'left', name });
+  else if (mode === 'game') {
+    await broadcastState(room, { kind: 'left', name });
+    await runBots(room.code); // the departed player's turn may pass to a bot
+  }
 }

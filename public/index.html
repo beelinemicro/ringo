@@ -30,6 +30,11 @@
         <button class="btn btn-big" id="btn-mode-ai">Play vs Computer</button>
         <button class="btn btn-big btn-primary" id="btn-mode-online">Play Online</button>
         <button class="btn btn-ghost" id="btn-rules">How to Play</button>
+        <button class="btn btn-ghost" id="btn-story">The Story of RINGO</button>
+      </div>
+      <div id="hof" class="hof hidden">
+        <h3>🏆 Family Hall of Fame</h3>
+        <ol id="hof-list"></ol>
       </div>
       <p class="credit">A family classic, invented by Dad.</p>
     </section>
@@ -53,6 +58,7 @@
         <button class="btn btn-small" id="btn-lobby-share">📨 Share Invite Link</button>
       </div>
       <ul id="lobby-players" class="lobby-players"></ul>
+      <button class="btn btn-small hidden" id="btn-lobby-addbot">🤖 Add a Computer Player</button>
       <p id="lobby-status" class="hint"></p>
       <div class="setup-actions">
         <button class="btn btn-ghost" id="btn-lobby-leave">Leave</button>
@@ -92,6 +98,33 @@
         </div>
       </div>
     </section>
+
+    <!-- ============ STORY MODAL ============ -->
+    <div id="story-modal" class="banner hidden">
+      <div class="banner-card rules-card">
+        <h2>The Story of RINGO</h2>
+        <div class="story-text">
+          <p>RINGO didn&rsquo;t start as a website. It started the way the best
+          games do &mdash; with <strong>Dad</strong>, a board, two dice, and a
+          pile of colored rings.</p>
+          <p>He drew up a 5&times;5 grid, lettered the columns
+          <strong>R&#8209;I&#8209;N&#8209;G&#8209;O</strong>, numbered the rows
+          1&ndash;5, and put a wild star on each die. The rules fit in a few
+          sentences, but the games never went quietly: rings get stolen, corners
+          get claimed, and the first one to five-in-a-row gets to shout
+          <strong>&ldquo;RINGO!&rdquo;</strong> at the whole table.</p>
+          <p>It&rsquo;s been a family favorite ever since &mdash; the kind of
+          game that comes out after dinner and doesn&rsquo;t get put away after
+          just one round.</p>
+          <p>This site brings Dad&rsquo;s game online so the whole family can
+          play it from anywhere &mdash; same board, same dice, same shout.
+          Every game played here is another chapter.</p>
+        </div>
+        <div class="setup-actions">
+          <button class="btn btn-primary" id="btn-story-close">&hearts;</button>
+        </div>
+      </div>
+    </div>
 
     <!-- ============ RULES MODAL ============ -->
     <div id="rules-modal" class="banner hidden">

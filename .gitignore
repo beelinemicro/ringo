@@ -1,3 +1,4 @@
 node_modules/
 build/
 usage.log
+stats.json

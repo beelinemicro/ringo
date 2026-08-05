@@ -172,6 +172,54 @@ body {
   font-style: italic;
 }
 
+/* ============ Hall of Fame ============ */
+
+.hof {
+  margin-top: 22px;
+  padding: 12px 22px 14px;
+  background: rgba(0, 0, 0, 0.22);
+  border-radius: var(--radius);
+  width: min(320px, 90vw);
+  text-align: center;
+}
+
+.hof h3 {
+  margin: 0 0 8px;
+  font-size: 1rem;
+  opacity: 0.9;
+}
+
+.hof ol {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.95rem;
+}
+
+.hof li {
+  opacity: 0.85;
+}
+
+.hof li:first-child {
+  opacity: 1;
+  font-weight: 600;
+}
+
+/* ============ Story modal ============ */
+
+.story-text {
+  text-align: left;
+  font-size: 1rem;
+  line-height: 1.5;
+}
+
+.story-text p {
+  margin: 0 0 12px;
+}
+
 /* ============ Buttons ============ */
 
 .btn {
@@ -327,6 +375,18 @@ body {
 /* Player whose connection dropped (backgrounded phone) — seat is held. */
 .lobby-players li.away {
   opacity: 0.55;
+}
+
+/* Host's remove-bot control. */
+.lobby-players .kick {
+  float: right;
+  opacity: 0.6;
+  cursor: pointer;
+  padding: 0 4px;
+}
+
+.lobby-players .kick:hover {
+  opacity: 1;
 }
 
 /* ============ Game screen ============ */

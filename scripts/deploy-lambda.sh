@@ -7,8 +7,8 @@ cd "$(dirname "$0")/.."
 BUILD=build/lambda
 rm -rf "$BUILD"
 mkdir -p "$BUILD"
-cp aws/ws-handler/index.mjs public/js/game.js "$BUILD/"
-(cd "$BUILD" && zip -q ../ringo-ws.zip index.mjs game.js)
+cp aws/ws-handler/index.mjs public/js/game.js public/js/ai.js "$BUILD/"
+(cd "$BUILD" && zip -q ../ringo-ws.zip index.mjs game.js ai.js)
 
 aws lambda update-function-code --region us-east-2 \
   --function-name ringo-ws \

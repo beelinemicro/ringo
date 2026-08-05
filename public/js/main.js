@@ -37,6 +37,8 @@ $('btn-mode-ai').addEventListener('click', () => { unlock(); sfx.click(); openSe
 $('btn-mode-online').addEventListener('click', () => { unlock(); sfx.click(); openSetup('online'); });
 $('btn-rules').addEventListener('click', () => { sfx.click(); $('rules-modal').classList.remove('hidden'); });
 $('btn-rules-close').addEventListener('click', () => { sfx.click(); $('rules-modal').classList.add('hidden'); });
+$('btn-story').addEventListener('click', () => { sfx.click(); $('story-modal').classList.remove('hidden'); });
+$('btn-story-close').addEventListener('click', () => { sfx.click(); $('story-modal').classList.add('hidden'); });
 
 // ---------- setup ----------
 
@@ -678,8 +680,16 @@ function handleServer(msg) {
       list.innerHTML = '';
       msg.players.forEach((p, i) => {
         const li = document.createElement('li');
-        li.innerHTML = `${colorDot(i)}${p.name}${p.away ? ' 💤' : ''}${i === msg.host ? ' 👑' : ''}${i === msg.you ? ' (you)' : ''}`;
+        li.innerHTML = `${colorDot(i)}${p.name}${p.isBot ? ' 🤖' : ''}${p.away ? ' 💤' : ''}${i === msg.host ? ' 👑' : ''}${i === msg.you ? ' (you)' : ''}`;
         if (p.away) li.classList.add('away');
+        if (p.isBot && net.isHost) {
+          const x = document.createElement('span');
+          x.className = 'kick';
+          x.textContent = '✕';
+          x.title = 'Remove computer player';
+          x.addEventListener('click', () => { sfx.click(); send({ type: 'removebot', i }); });
+          li.appendChild(x);
+        }
         if (i === msg.you) {
           li.classList.add('editable');
           li.title = 'Tap to rename';
@@ -699,6 +709,7 @@ function handleServer(msg) {
       const here = msg.players.filter((p) => !p.away).length;
       $('btn-lobby-start').classList.toggle('hidden', !net.isHost);
       $('btn-lobby-start').disabled = here < 2;
+      $('btn-lobby-addbot').classList.toggle('hidden', !net.isHost || msg.players.length >= 5);
       $('lobby-status').textContent = net.isHost
         ? (here < 2 ? 'Waiting for at least one more player…' : 'Ready when you are!')
         : 'Waiting for the host to start the game…';
@@ -799,6 +810,7 @@ function handleServer(msg) {
 
 $('btn-lobby-start').addEventListener('click', () => { sfx.click(); send({ type: 'start' }); });
 $('btn-lobby-leave').addEventListener('click', () => { sfx.click(); quitToMenu(); });
+$('btn-lobby-addbot').addEventListener('click', () => { sfx.click(); send({ type: 'addbot' }); });
 
 // One tap to text the room to the family: native share sheet where the
 // browser has one (phones), clipboard everywhere else.
@@ -817,6 +829,28 @@ $('btn-lobby-share').addEventListener('click', async () => {
     $('lobby-status').textContent = url; // last resort: show it
   }
 });
+
+// ---------- hall of fame ----------
+
+// Online wins/losses per family member, kept by the server and pushed to
+// every open menu the moment a game ends.
+function renderHallOfFame(top) {
+  if (!top || top.length === 0) {
+    $('hof').classList.add('hidden');
+    return;
+  }
+  const medals = ['🥇', '🥈', '🥉'];
+  const list = $('hof-list');
+  list.innerHTML = '';
+  top.forEach((s, i) => {
+    const li = document.createElement('li');
+    const w = `${s.wins} win${s.wins === 1 ? '' : 's'}`;
+    const l = s.losses ? ` · ${s.losses} loss${s.losses === 1 ? '' : 'es'}` : '';
+    li.textContent = `${medals[i] || '•'} ${s.name} — ${w}${l}`;
+    list.appendChild(li);
+  });
+  $('hof').classList.remove('hidden');
+}
 
 // ---------- turn nudges ----------
 
@@ -875,12 +909,15 @@ function startPresence() {
   };
   ws.onmessage = (ev) => {
     const msg = JSON.parse(ev.data);
-    if (msg.type !== 'presence') return;
     checkVersion(msg.v);
-    $('presence-count').textContent = msg.count === 1
-      ? 'Just you here right now'
-      : `${msg.count} people here now`;
-    $('presence').classList.remove('hidden');
+    if (msg.type === 'presence') {
+      $('presence-count').textContent = msg.count === 1
+        ? 'Just you here right now'
+        : `${msg.count} people here now`;
+      $('presence').classList.remove('hidden');
+    } else if (msg.type === 'stats') {
+      renderHallOfFame(msg.top);
+    }
   };
   ws.onerror = () => ws.close();
   ws.onclose = () => {
