@@ -5,6 +5,11 @@
 //   ROOM#<code> — players, host, started flag, game state, rematch rotation
 //   CONN#<id>   — reverse lookup so $disconnect can find its room
 //
+// Writes use optimistic locking: every room carries a `rev` counter and saves
+// are conditional on the rev they read. Simultaneous joins (five family
+// members tapping the same code at once) retry instead of clobbering each
+// other.
+//
 // The deploy script copies public/js/game.js next to this file so the exact
 // same rules run in the cloud, in the browser, and in local server.js.
 
@@ -15,6 +20,7 @@ import { GAME_VERSION, newGame, rollDice, applyRoll, applyPlace, isLegal, nextPl
 
 const TABLE = process.env.RINGO_TABLE || 'ringo';
 const TTL_HOURS = 24;
+const MAX_ROOM_PLAYERS = 5;
 
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}), {
   marshallOptions: { removeUndefinedValues: true },
@@ -58,13 +64,47 @@ async function getItem(pk) {
 
 const getRoom = (code) => getItem(`ROOM#${code}`);
 
-async function saveRoom(room) {
+// Conditional save: succeeds only if the stored rev still matches the one we
+// read. Returns false on a lost race so the caller can reload and retry.
+async function trySaveRoom(room) {
+  const prev = room.rev || 0;
+  room.rev = prev + 1;
   room.ttl = ttl();
-  await ddb.send(new PutCommand({ TableName: TABLE, Item: room }));
+  try {
+    await ddb.send(new PutCommand({
+      TableName: TABLE,
+      Item: room,
+      ConditionExpression: 'attribute_not_exists(pk) OR rev = :prev',
+      ExpressionAttributeValues: { ':prev': prev },
+    }));
+    return true;
+  } catch (e) {
+    if (e.name === 'ConditionalCheckFailedException') {
+      room.rev = prev;
+      return false;
+    }
+    throw e;
+  }
 }
 
-async function deleteRoom(room) {
-  await ddb.send(new DeleteCommand({ TableName: TABLE, Key: { pk: room.pk } }));
+// Load-mutate-save with retry. The mutator returns:
+//   true     — save the room
+//   'delete' — remove the room instead
+//   false    — validation failed; save nothing
+// Returns { room, out } where room is null if the code doesn't exist.
+async function mutateRoom(code, mutator) {
+  for (let attempt = 0; attempt < 6; attempt++) {
+    const room = await getRoom(code);
+    if (!room) return { room: null, out: null };
+    const out = mutator(room);
+    if (out === false) return { room, out };
+    if (out === 'delete') {
+      await ddb.send(new DeleteCommand({ TableName: TABLE, Key: { pk: room.pk } }));
+      return { room, out };
+    }
+    if (await trySaveRoom(room)) return { room, out };
+  }
+  throw new Error(`room ${code}: too much write contention`);
 }
 
 async function mapConnection(connId, code, idx) {
@@ -112,14 +152,8 @@ function cleanName(raw) {
 // No ambiguous letters (I/L/O look like 1/0).
 const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ';
 
-async function makeCode() {
-  for (let tries = 0; tries < 10; tries++) {
-    const code = Array.from({ length: 4 }, () =>
-      CODE_ALPHABET[Math.floor(Math.random() * CODE_ALPHABET.length)]).join('');
-    if (!(await getRoom(code))) return code;
-  }
-  throw new Error('could not allocate a room code');
-}
+const randomCode = () => Array.from({ length: 4 }, () =>
+  CODE_ALPHABET[Math.floor(Math.random() * CODE_ALPHABET.length)]).join('');
 
 // ---------- message handling ----------
 
@@ -129,30 +163,46 @@ async function onMessage(connId, msg) {
       return;
 
     case 'create': {
-      const code = await makeCode();
-      const room = {
-        pk: `ROOM#${code}`,
-        code,
-        players: [{ name: cleanName(msg.name), connectionId: connId, disconnected: false }],
-        host: 0,
-        started: false,
-        state: null,
-        firstPlayer: 0,
-      };
-      await mapConnection(connId, code, 0);
-      await saveRoom(room);
-      await broadcastLobby(room);
-      return;
+      for (let tries = 0; tries < 10; tries++) {
+        const code = randomCode();
+        const room = {
+          pk: `ROOM#${code}`,
+          code,
+          rev: 0,
+          players: [{ name: cleanName(msg.name), connectionId: connId, disconnected: false }],
+          host: 0,
+          started: false,
+          state: null,
+          firstPlayer: 0,
+        };
+        if (await getRoom(code)) continue;
+        if (await trySaveRoom(room)) {
+          await mapConnection(connId, code, 0);
+          await broadcastLobby(room);
+          return;
+        }
+      }
+      throw new Error('could not allocate a room code');
     }
 
     case 'join': {
-      const room = await getRoom(String(msg.code || '').toUpperCase());
+      const code = String(msg.code || '').toUpperCase();
+      let err = null;
+      let seat = -1;
+      const { room, out } = await mutateRoom(code, (r) => {
+        err = null;
+        if (r.started) { err = 'That game already started.'; return false; }
+        if (r.players.length >= MAX_ROOM_PLAYERS) {
+          err = `That room is full (${MAX_ROOM_PLAYERS} players max).`;
+          return false;
+        }
+        r.players.push({ name: cleanName(msg.name), connectionId: connId, disconnected: false });
+        seat = r.players.length - 1;
+        return true;
+      });
       if (!room) return sendTo(connId, { type: 'error', message: 'No room with that code.' });
-      if (room.started) return sendTo(connId, { type: 'error', message: 'That game already started.' });
-      if (room.players.length >= 4) return sendTo(connId, { type: 'error', message: 'That room is full (4 players max).' });
-      room.players.push({ name: cleanName(msg.name), connectionId: connId, disconnected: false });
-      await mapConnection(connId, room.code, room.players.length - 1);
-      await saveRoom(room);
+      if (out === false) return sendTo(connId, { type: 'error', message: err });
+      await mapConnection(connId, code, seat);
       await broadcastLobby(room);
       return;
     }
@@ -161,59 +211,74 @@ async function onMessage(connId, msg) {
   // Everything below needs an existing room membership.
   const conn = await getItem(`CONN#${connId}`);
   if (!conn) return;
-  const room = await getRoom(conn.code);
-  if (!room) return;
   const idx = conn.idx;
 
   switch (msg.type) {
     case 'start': {
-      if (room.started || idx !== room.host || room.players.length < 2) return;
-      room.started = true;
-      room.state = newGame(room.players.map((p) => ({ name: p.name })), room.firstPlayer);
-      await saveRoom(room);
-      await broadcastState(room, { kind: 'start' });
+      const { room, out } = await mutateRoom(conn.code, (r) => {
+        if (r.started || idx !== r.host || r.players.length < 2) return false;
+        r.started = true;
+        r.state = newGame(r.players.map((p) => ({ name: p.name })), r.firstPlayer);
+        return true;
+      });
+      if (room && out === true) await broadcastState(room, { kind: 'start' });
       return;
     }
 
     case 'roll': {
-      if (!room.started) return;
-      const phase = room.state.phase;
-      if (phase !== 'roll' && phase !== 'blocked') return;
-      if (idx !== room.state.current) return;
-      const dice = rollDice();
-      const by = room.players[idx].name;
-      const result = applyRoll(room.state, dice); // 'place' | 'blocked' | 'reroll'
-      await saveRoom(room);
-      await broadcastState(room, { kind: result === 'place' ? 'roll' : result, dice, by });
+      let event = null;
+      const { room, out } = await mutateRoom(conn.code, (r) => {
+        event = null;
+        if (!r.started) return false;
+        const phase = r.state.phase;
+        if (phase !== 'roll' && phase !== 'blocked') return false;
+        if (idx !== r.state.current) return false;
+        const dice = rollDice();
+        const result = applyRoll(r.state, dice); // 'place' | 'blocked' | 'reroll'
+        event = { kind: result === 'place' ? 'roll' : result, dice, by: r.players[idx].name };
+        return true;
+      });
+      if (room && out === true) await broadcastState(room, event);
       return;
     }
 
     case 'place': {
-      if (!room.started) return;
-      const phase = room.state.phase;
-      if (phase !== 'place' && phase !== 'blocked') return;
-      if (idx !== room.state.current) return;
-      const r = Number(msg.r);
-      const c = Number(msg.c);
-      if (!isLegal(room.state, r, c)) return;
-      const by = room.players[idx].name;
-      const { result, stolen } = applyPlace(room.state, r, c);
-      await saveRoom(room);
-      await broadcastState(room, { kind: result === 'next' ? 'place' : result, cell: [r, c], stolen, by });
+      let event = null;
+      const { room, out } = await mutateRoom(conn.code, (r) => {
+        event = null;
+        if (!r.started) return false;
+        const phase = r.state.phase;
+        if (phase !== 'place' && phase !== 'blocked') return false;
+        if (idx !== r.state.current) return false;
+        const row = Number(msg.r);
+        const col = Number(msg.c);
+        if (!isLegal(r.state, row, col)) return false;
+        const { result, stolen } = applyPlace(r.state, row, col);
+        event = {
+          kind: result === 'next' ? 'place' : result,
+          cell: [row, col],
+          stolen,
+          by: r.players[idx].name,
+        };
+        return true;
+      });
+      if (room && out === true) await broadcastState(room, event);
       return;
     }
 
     case 'again': {
-      if (!room.started || room.state.phase !== 'over' || idx !== room.host) return;
-      room.firstPlayer = (room.firstPlayer + 1) % room.players.length;
-      room.state = newGame(
-        room.players.map((p) => ({ name: p.name, disconnected: p.disconnected })),
-        room.firstPlayer,
-      );
-      // Don't hand the first turn to someone who already left.
-      if (room.state.players[room.state.current].disconnected) nextPlayer(room.state);
-      await saveRoom(room);
-      await broadcastState(room, { kind: 'start' });
+      const { room, out } = await mutateRoom(conn.code, (r) => {
+        if (!r.started || r.state.phase !== 'over' || idx !== r.host) return false;
+        r.firstPlayer = (r.firstPlayer + 1) % r.players.length;
+        r.state = newGame(
+          r.players.map((p) => ({ name: p.name, disconnected: p.disconnected })),
+          r.firstPlayer,
+        );
+        // Don't hand the first turn to someone who already left.
+        if (r.state.players[r.state.current].disconnected) nextPlayer(r.state);
+        return true;
+      });
+      if (room && out === true) await broadcastState(room, { kind: 'start' });
       return;
     }
   }
@@ -225,44 +290,45 @@ async function onDisconnect(connId) {
   const conn = await getItem(`CONN#${connId}`);
   if (conn) await ddb.send(new DeleteCommand({ TableName: TABLE, Key: { pk: `CONN#${connId}` } }));
   if (!conn) return;
-  const room = await getRoom(conn.code);
-  if (!room) return;
-  const idx = conn.idx;
-  // Stale mapping (e.g. this seat was re-numbered after a lobby leave).
-  if (!room.players[idx] || room.players[idx].connectionId !== connId) return;
 
-  if (!room.started) {
-    room.players.splice(idx, 1);
-    if (room.players.length === 0) {
-      await deleteRoom(room);
-      return;
+  let mode = null; // 'lobby' | 'game' | null
+  let name = null;
+  const { room, out } = await mutateRoom(conn.code, (r) => {
+    mode = null;
+    const idx = conn.idx;
+    // Stale mapping (e.g. this seat was re-numbered after a lobby leave).
+    if (!r.players[idx] || r.players[idx].connectionId !== connId) return false;
+
+    if (!r.started) {
+      r.players.splice(idx, 1);
+      if (r.players.length === 0) return 'delete';
+      if (r.host >= r.players.length) r.host = 0;
+      mode = 'lobby';
+      return true;
     }
-    if (room.host >= room.players.length) room.host = 0;
+
+    // Mid-game: mark the player as gone and skip their turns.
+    name = r.players[idx].name;
+    r.players[idx].disconnected = true;
+    r.players[idx].connectionId = null;
+    r.state.players[idx].disconnected = true;
+    if (r.players.every((p) => p.disconnected)) return 'delete';
+    if (r.host === idx) r.host = r.players.findIndex((p) => !p.disconnected);
+    if (r.state.phase !== 'over' && r.state.current === idx) {
+      nextPlayer(r.state);
+      r.state.phase = 'roll';
+      r.state.dice = null;
+    }
+    mode = 'game';
+    return true;
+  });
+
+  if (!room || out !== true) return;
+  if (mode === 'lobby') {
     // Seats shifted — refresh every remaining connection's mapping.
     await Promise.all(room.players.map((p, i) => mapConnection(p.connectionId, room.code, i)));
-    await saveRoom(room);
     await broadcastLobby(room);
-    return;
+  } else if (mode === 'game') {
+    await broadcastState(room, { kind: 'left', name });
   }
-
-  // Mid-game: mark the player as gone and skip their turns.
-  const name = room.players[idx].name;
-  room.players[idx].disconnected = true;
-  room.players[idx].connectionId = null;
-  room.state.players[idx].disconnected = true;
-
-  if (room.players.every((p) => p.disconnected)) {
-    await deleteRoom(room);
-    return;
-  }
-  if (room.host === idx) {
-    room.host = room.players.findIndex((p) => !p.disconnected);
-  }
-  if (room.state.phase !== 'over' && room.state.current === idx) {
-    nextPlayer(room.state);
-    room.state.phase = 'roll';
-    room.state.dice = null;
-  }
-  await saveRoom(room);
-  await broadcastState(room, { kind: 'left', name });
 }

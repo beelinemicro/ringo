@@ -171,6 +171,18 @@ for (let i = 0; i < 500; i++) {
   assert.equal(s.current, 0, 'turn is never forfeited');
 }
 
+// --- five players (Black is player index 4) ---
+{
+  const s = newGame([{ name: 'A' }, { name: 'B' }, { name: 'C' }, { name: 'D' }, { name: 'E' }]);
+  assert.equal(s.players.length, 5);
+  for (let i = 0; i < 4; i++) { s.current = i; applyRoll(s, { col: i, row: 0 }); applyPlace(s, 0, i); }
+  assert.equal(s.current, 4, 'turn reaches the fifth player');
+  for (let c = 0; c < 4; c++) s.board[4][c] = 4;
+  applyRoll(s, { col: 4, row: 4 });
+  assert.equal(applyPlace(s, 4, 4).result, 'win');
+  assert.equal(s.winner, 4, 'fifth player (Black) can win');
+}
+
 // --- disconnected players are skipped ---
 {
   const s = newGame([{ name: 'A' }, { name: 'B', disconnected: true }, { name: 'C' }]);

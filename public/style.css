@@ -5,7 +5,7 @@
   --c1: #f0b000;   /* Yellow */
   --c2: #3a7bd5;   /* Blue */
   --c3: #30a46c;   /* Green */
-  --c4: #9b59b6;   /* logo accent only */
+  --c4: #262626;   /* Black */
   --felt: #1d5c3a;
   --felt-dark: #14432a;
   --board-bg: #f7efdd;
@@ -263,6 +263,8 @@ body {
   border: 4px solid;
   vertical-align: -3px;
   margin-right: 8px;
+  /* Light rim so the black ring reads against dark backgrounds. */
+  box-shadow: 0 0 0 1.5px rgba(255, 255, 255, 0.3);
 }
 
 .room-code-wrap { text-align: center; }
@@ -340,6 +342,7 @@ body {
   height: 10px;
   border-radius: 50%;
   border: 4px solid;
+  box-shadow: 0 0 0 1.5px rgba(255, 255, 255, 0.3);
 }
 
 .table {
@@ -447,6 +450,7 @@ body {
 .ring.p1 { border-color: var(--c1); }
 .ring.p2 { border-color: var(--c2); }
 .ring.p3 { border-color: var(--c3); }
+.ring.p4 { border-color: var(--c4); }
 
 /* A stealable ring wobbles nervously. */
 .cell.steal .ring {

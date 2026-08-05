@@ -92,7 +92,7 @@ function openSetup(m) {
     const f = document.createElement('div');
     f.className = 'field';
     f.innerHTML = '<label>How many players?</label>';
-    f.appendChild(segButtons([2, 3, 4], 2, (v) => { count = v; renderNames(); }));
+    f.appendChild(segButtons([2, 3, 4, 5], 2, (v) => { count = v; renderNames(); }));
     body.appendChild(f);
     body.appendChild(nameFields);
     renderNames();
@@ -115,13 +115,13 @@ function openSetup(m) {
     const f = document.createElement('div');
     f.className = 'field';
     f.innerHTML = '<label>How many computer players?</label>';
-    f.appendChild(segButtons([1, 2, 3], 1, (v) => { bots = v; }));
+    f.appendChild(segButtons([1, 2, 3, 4], 1, (v) => { bots = v; }));
     body.appendChild(f);
 
     $('btn-setup-go').onclick = () => {
       const you = $('ai-name').value.trim() || 'You';
       localStorage.setItem('ringoName', you);
-      const botNames = ['Chip', 'Sparky', 'Gizmo'];
+      const botNames = ['Chip', 'Sparky', 'Gizmo', 'Bolt'];
       const players = [{ name: you }];
       for (let i = 0; i < bots; i++) players.push({ name: botNames[i], isBot: true });
       startLocalGame(players);

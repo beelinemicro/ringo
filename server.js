@@ -150,7 +150,7 @@ function handleMessage(ws, msg) {
       const r = rooms.get(String(msg.code || '').toUpperCase());
       if (!r) return sendTo(ws, { type: 'error', message: 'No room with that code.' });
       if (r.started) return sendTo(ws, { type: 'error', message: 'That game already started.' });
-      if (r.players.length >= 4) return sendTo(ws, { type: 'error', message: 'That room is full (4 players max).' });
+      if (r.players.length >= 5) return sendTo(ws, { type: 'error', message: 'That room is full (5 players max).' });
       r.players.push({ name: cleanName(msg.name) });
       r.sockets.push(ws);
       ws.roomCode = r.code;

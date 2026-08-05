@@ -21,14 +21,15 @@ npm start
 
 Then open **http://localhost:3000**. Three ways to play:
 
-- **Pass & Play** — 2–4 players sharing one screen
-- **Play vs Computer** — you against 1–3 computer players
+- **Pass & Play** — 2–5 players sharing one screen
+- **Play vs Computer** — you against 1–4 computer players
 - **Play Online** — one player creates a room and shares the 4-letter code;
-  everyone else joins with it. Up to 4 players, each on their own device.
+  everyone else joins with it. Up to 5 players, each on their own device.
 
 ## Rules
 
-1. Each player takes a ring color: **Red**, **Yellow**, **Blue**, or **Green**.
+1. Each player takes a ring color: **Red**, **Yellow**, **Blue**, **Green**,
+   or **Black**.
 2. On your turn, roll both dice. Place your ring on the space where the rolled
    letter column and number row meet.
 3. A **★ wild** on a die lets you choose that coordinate yourself — and a wild

@@ -15,7 +15,7 @@
 
 // Bump this whenever the rules change. Servers stamp it on every message;
 // clients that see a newer number show the "refresh for new rules" banner.
-export const GAME_VERSION = 2;
+export const GAME_VERSION = 3;
 
 export const SIZE = 5;
 export const WILD = 'W';
@@ -26,7 +26,10 @@ export const COLORS = [
   { name: 'Yellow', hex: '#f0b000' },
   { name: 'Blue', hex: '#3a7bd5' },
   { name: 'Green', hex: '#30a46c' },
+  { name: 'Black', hex: '#262626' },
 ];
+
+export const MAX_PLAYERS = COLORS.length;
 
 export function newGame(players, startingPlayer = 0) {
   return {
