@@ -61,7 +61,9 @@ function centralTime(d) {
   return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}:${parts.second} ${parts.timeZoneName}`;
 }
 
-const USAGE_LOG = path.join(path.dirname(fileURLToPath(import.meta.url)), 'usage.log');
+// Overridable so the test suite can sandbox its writes.
+const USAGE_LOG = process.env.RINGO_USAGE_LOG
+  || path.join(path.dirname(fileURLToPath(import.meta.url)), 'usage.log');
 
 function logVisit(ip) {
   const now = new Date();
@@ -79,7 +81,8 @@ function broadcastPresence() {
 
 // ---------- hall of fame ----------
 
-const STATS_FILE = path.join(path.dirname(fileURLToPath(import.meta.url)), 'stats.json');
+const STATS_FILE = process.env.RINGO_STATS_FILE
+  || path.join(path.dirname(fileURLToPath(import.meta.url)), 'stats.json');
 
 let stats = {};
 try { stats = JSON.parse(fs.readFileSync(STATS_FILE, 'utf8')); } catch { /* first run */ }
@@ -178,6 +181,9 @@ function cleanName(raw) {
 const BOT_NAMES = ['Chip', 'Sparky', 'Gizmo', 'Bolt'];
 const BOT_LEVELS = ['easy', 'normal', 'hard'];
 
+// ~1s between bot actions feels human; the test suite turns it way down.
+const BOT_DELAY = Number(process.env.RINGO_BOT_DELAY || 850);
+
 const cleanLevel = (l) => (BOT_LEVELS.includes(l) ? l : 'normal');
 
 const REACTIONS = ['🎉', '😂', '😱', '😈', '💪', '❤️'];
@@ -195,7 +201,7 @@ async function runBots(room) {
       const bot = room.players[st.current];
       if (!bot?.isBot) return;
       if (!room.players.some((p, i) => !p.isBot && room.sockets[i])) return; // nobody watching
-      await sleep(850);
+      await sleep(BOT_DELAY);
       if (!rooms.has(room.code) || !room.started || st !== room.state || st.phase === 'over') return;
 
       let cell = null;

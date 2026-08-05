@@ -784,7 +784,15 @@ body {
   font-weight: 600;
 }
 
-.rules-card { text-align: left; }
+.rules-card {
+  text-align: left;
+  /* Taller than the screen on phones — scroll inside the card. */
+  max-height: 86vh;
+  max-height: 86dvh; /* stable under mobile browser chrome */
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
 
 .rules-card h2 { margin-top: 0; text-align: center; }
 
@@ -804,4 +812,5 @@ body {
   .message { max-width: none; min-height: 2.4em; }
   .die { width: 64px; height: 64px; }
   .die-face { font-size: 2rem; }
+  .banner-card { padding: 22px 20px; }
 }
