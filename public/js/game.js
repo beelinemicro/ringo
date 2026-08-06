@@ -39,7 +39,8 @@ export function newGame(players, startingPlayer = 0) {
     phase: 'roll', // 'roll' | 'place' | 'blocked' | 'over'
     dice: null, // { col: 0-4 | 'W', row: 0-4 | 'W' }
     winner: null, // player index
-    winLine: null, // [[r,c] x5]
+    winLine: null, // first completed line (kept for compatibility)
+    winLines: null, // every line the winning ring completed
     lastPlaced: null,
   };
 }
@@ -99,8 +100,15 @@ export const CORNERS = [[0, 0], [0, SIZE - 1], [SIZE - 1, 0], [SIZE - 1, SIZE - 
 // Every way to win: the twelve 5-in-a-row lines, plus the four corners.
 export const WIN_LINES = [...ALL_LINES, CORNERS];
 
+// All win lines the player currently owns. A final ring can complete more
+// than one at once — a DOUBLE (or TRIPLE, or the corner-only QUADRUPLE)
+// RINGO, celebrated accordingly.
+export function winLinesFor(board, player) {
+  return WIN_LINES.filter((line) => line.every(([r, c]) => board[r][c] === player));
+}
+
 export function winLineFor(board, player) {
-  return WIN_LINES.find((line) => line.every(([r, c]) => board[r][c] === player)) || null;
+  return winLinesFor(board, player)[0] || null;
 }
 
 export function nextPlayer(state) {
@@ -161,11 +169,12 @@ export function applyPlace(state, r, c) {
   const stolen = state.board[r][c];
   state.board[r][c] = p;
   state.lastPlaced = [r, c];
-  const line = winLineFor(state.board, p);
-  if (line) {
+  const lines = winLinesFor(state.board, p);
+  if (lines.length) {
     state.phase = 'over';
     state.winner = p;
-    state.winLine = line;
+    state.winLine = lines[0];
+    state.winLines = lines;
     return { result: 'win', stolen };
   }
   nextPlayer(state);

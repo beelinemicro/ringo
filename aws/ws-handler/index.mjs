@@ -268,6 +268,7 @@ async function runBots(code) {
 // the visit log, these are permanent.
 async function recordResult(room) {
   const winner = room.state.winner;
+  const lines = (room.state.winLines || []).length || 1;
   const humans = room.state.players
     .map((p, i) => ({ name: p.name, key: p.name.trim().toLowerCase(), i }))
     .filter((p) => !room.state.players[p.i].isBot && p.key);
@@ -285,9 +286,29 @@ async function recordResult(room) {
         losses: (cur.losses || 0) + (won ? 0 : 1),
         streak,
         bestStreak: Math.max(cur.bestStreak || 0, streak),
+        legendary: (cur.legendary || 0) + (won && lines >= 2 ? 1 : 0),
       },
     }));
   }));
+
+  // A multi-line finish goes in the permanent book of legends — even a
+  // bot's (the family will want to remember the betrayal).
+  if (lines >= 2) {
+    const wp = room.state.players[winner];
+    const now = new Date();
+    await ddb.send(new PutCommand({
+      TableName: TABLE,
+      Item: {
+        pk: `LEGEND#${now.toISOString()}#${wp.name.trim().toLowerCase()}`,
+        name: wp.name,
+        lines,
+        utc: now.toISOString(),
+        central: centralTime(now),
+        code: room.code,
+        isBot: !!wp.isBot,
+      },
+    }));
+  }
 
   // Head-to-head: the winner logs a result against every other human.
   const w = humans.find((p) => p.i === winner);
@@ -328,6 +349,7 @@ const playerStats = (s) => ({
   losses: s.losses || 0,
   streak: s.streak || 0,
   bestStreak: s.bestStreak || 0,
+  legendary: s.legendary || 0,
 });
 
 const byRank = (a, b) => b.wins - a.wins || a.losses - b.losses;
@@ -339,12 +361,17 @@ async function topStats() {
 // Everything for the "Full family stats" view: the whole leaderboard plus
 // every rivalry, biggest first.
 async function fullStats() {
-  const [stats, h2h] = await Promise.all([scanPrefix('STAT#'), scanPrefix('H2H#')]);
+  const [stats, h2h, legends] = await Promise.all([
+    scanPrefix('STAT#'), scanPrefix('H2H#'), scanPrefix('LEGEND#'),
+  ]);
   return {
     players: stats.map(playerStats).sort(byRank),
     h2h: h2h
       .map((x) => ({ a: x.aName, b: x.bName, aWins: x.aWins || 0, bWins: x.bWins || 0 }))
       .sort((p, q) => (q.aWins + q.bWins) - (p.aWins + p.bWins)),
+    legends: legends
+      .map((l) => ({ name: l.name, lines: l.lines, central: l.central, isBot: !!l.isBot }))
+      .sort((a, b) => (a.central < b.central ? 1 : -1)),
   };
 }
 

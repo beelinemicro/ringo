@@ -847,6 +847,24 @@ body {
   to { transform: scale(1) rotate(0); }
 }
 
+/* Multi-line finish (DOUBLE/TRIPLE/QUADRUPLE RINGO) — shimmering gold.
+   Smaller than the plain banner: these titles are longer words. */
+.banner-text.legendary {
+  font-size: clamp(2rem, 7.5vw, 3.1rem);
+  background: linear-gradient(90deg, #c47f00, #ffd34d, #c47f00, #ffd34d, #c47f00);
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-stroke: 2px rgba(160, 100, 0, 0.4); /* keeps every glyph visible at the gradient's light band */
+  animation: bannerpop 0.45s cubic-bezier(0.34, 1.56, 0.64, 1),
+    legend-shimmer 1.8s linear infinite;
+  filter: drop-shadow(0 4px 18px rgba(255, 211, 77, 0.55));
+}
+
+@keyframes legend-shimmer {
+  to { background-position: 200% 0; }
+}
+
 .banner-sub {
   font-size: 1.3rem;
   margin: 8px 0 16px;

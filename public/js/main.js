@@ -258,7 +258,8 @@ function renamePlayer(i) {
 function renderBoard() {
   const legal = selectableCells(state);
   const canClick = myTurn() && legal.length > 0 && !busy;
-  const winSet = new Set((state.winLine || []).map(([r, c]) => `${r},${c}`));
+  const winCells = state.winLines ? state.winLines.flat() : (state.winLine || []);
+  const winSet = new Set(winCells.map(([r, c]) => `${r},${c}`));
 
   for (let r = 0; r < SIZE; r++) {
     for (let c = 0; c < SIZE; c++) {
@@ -424,7 +425,7 @@ function doLocalPlace(r, c) {
     setMessage(`${state.players[placedBy].name} stole the spot from ${state.players[stolen].name}!`);
   }
   if (result === 'win') {
-    endLocalGame(`${state.players[placedBy].name} wins!`, placedBy);
+    endLocalGame(placedBy);
   } else {
     maybeBotAct();
   }
@@ -453,21 +454,44 @@ function maybeBotAct() {
   }
 }
 
-function endLocalGame(subtitle, winnerIdx) {
+function endLocalGame(winnerIdx) {
   setTimeout(() => {
-    showBanner('RINGO!', subtitle, winnerIdx);
+    showBanner(winTitle(state), winSub(state), winnerIdx);
     if (mode === 'ai' && state.players[winnerIdx].isBot) {
       sfx.lose();
     } else {
-      sfx.win();
-      confettiBurst($('confetti'), [COLORS[winnerIdx].hex, '#ffd34d', '#ffffff']);
+      celebrateWin(state, [COLORS[winnerIdx].hex, '#ffd34d', '#ffffff']);
     }
   }, 700);
 }
 
 // ---------- banner ----------
 
+// One ring, more than one line: 2 = DOUBLE, 3 = TRIPLE, and the
+// corner-only 4 = QUADRUPLE RINGO. Legendary, and recorded as such.
+function winTitle(st) {
+  const n = st?.winLines?.length || 1;
+  return ['RINGO!', 'DOUBLE RINGO!', 'TRIPLE RINGO!', 'QUADRUPLE RINGO!'][n - 1] || 'RINGO!';
+}
+
+function winSub(st) {
+  const n = st?.winLines?.length || 1;
+  const name = st.players[st.winner].name;
+  return n >= 2 ? `${name} wins with a legendary ${n}-line finish!` : `${name} wins!`;
+}
+
+function celebrateWin(st, colors) {
+  const n = st?.winLines?.length || 1;
+  sfx.win();
+  confettiBurst($('confetti'), colors);
+  if (n >= 2) {
+    sfx.wild();
+    for (let i = 1; i < n; i++) setTimeout(() => confettiBurst($('confetti'), colors), i * 450);
+  }
+}
+
 function showBanner(text, sub, winnerIdx) {
+  $('banner-text').classList.toggle('legendary', /DOUBLE|TRIPLE|QUADRUPLE/.test(text));
   $('banner-text').textContent = text;
   $('banner-sub').innerHTML = winnerIdx !== null
     ? `<span class="player-color-dot" style="border-color:${COLORS[winnerIdx].hex}"></span>${sub}`
@@ -803,10 +827,9 @@ function handleServer(msg) {
         renderAll();
         if (ev.kind === 'win') {
           setTimeout(() => {
-            showBanner('RINGO!', `${state.players[state.winner].name} wins!`, state.winner);
+            showBanner(winTitle(state), winSub(state), state.winner);
             if (state.winner === net.myIndex) {
-              sfx.win();
-              confettiBurst($('confetti'), [COLORS[state.winner].hex, '#ffd34d', '#ffffff']);
+              celebrateWin(state, [COLORS[state.winner].hex, '#ffd34d', '#ffffff']);
             } else {
               sfx.lose();
             }
@@ -832,7 +855,7 @@ function handleServer(msg) {
         renderAll();
         // A rejoiner landing on a finished game should still see the result.
         if (state.phase === 'over') {
-          showBanner('RINGO!', `${state.players[state.winner].name} wins!`, state.winner);
+          showBanner(winTitle(state), winSub(state), state.winner);
         } else {
           setMessage(`${ev.name} is back!`);
           setTimeout(() => renderAll(), 2000);
@@ -957,7 +980,8 @@ function renderFullStats(msg) {
   body.innerHTML = '';
   msg.players.forEach((s) => {
     const tr = document.createElement('tr');
-    [s.name, s.wins, s.losses, s.streak >= 2 ? `🔥${s.streak}` : s.streak || '–', s.bestStreak || '–']
+    const star = s.legendary ? ` ⭐${s.legendary > 1 ? `×${s.legendary}` : ''}` : '';
+    [s.name + star, s.wins, s.losses, s.streak >= 2 ? `🔥${s.streak}` : s.streak || '–', s.bestStreak || '–']
       .forEach((v, i) => {
         const td = document.createElement('td');
         td.textContent = v;
@@ -979,6 +1003,23 @@ function renderFullStats(msg) {
     row.title = `${r.a} ${lead} ${r.b}`;
     h2h.appendChild(row);
   });
+
+  // The book of legends — hidden until somebody earns a page in it.
+  const hasLegends = msg.legends && msg.legends.length > 0;
+  $('stats-legends-h').classList.toggle('hidden', !hasLegends);
+  $('stats-legends').classList.toggle('hidden', !hasLegends);
+  if (hasLegends) {
+    const kind = { 2: 'DOUBLE', 3: 'TRIPLE', 4: 'QUADRUPLE' };
+    const box = $('stats-legends');
+    box.innerHTML = '';
+    msg.legends.forEach((l) => {
+      const row = document.createElement('div');
+      row.className = 'stats-h2h-row';
+      const day = (l.central || '').split(' ')[0];
+      row.textContent = `🌟 ${l.name}${l.isBot ? ' 🤖' : ''} — ${kind[l.lines] || l.lines + '-line'} RINGO · ${day}`;
+      box.appendChild(row);
+    });
+  }
   $('stats-modal').classList.remove('hidden');
 }
 

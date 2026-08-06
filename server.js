@@ -84,12 +84,14 @@ function broadcastPresence() {
 const STATS_FILE = process.env.RINGO_STATS_FILE
   || path.join(path.dirname(fileURLToPath(import.meta.url)), 'stats.json');
 
-// { players: { key: {name, wins, losses, streak, bestStreak} },
-//   h2h:     { 'a|b': {aName, bName, aWins, bWins} } }
-let stats = { players: {}, h2h: {} };
+// { players: { key: {name, wins, losses, streak, bestStreak, legendary} },
+//   h2h:     { 'a|b': {aName, bName, aWins, bWins} },
+//   legends: [ {name, lines, utc, central, code, isBot} ] }
+let stats = { players: {}, h2h: {}, legends: [] };
 try {
   const raw = JSON.parse(fs.readFileSync(STATS_FILE, 'utf8'));
   stats = raw.players ? raw : { players: raw, h2h: {} }; // migrate the old flat shape
+  stats.legends = stats.legends || [];
 } catch { /* first run */ }
 
 const byRank = (a, b) => b.wins - a.wins || a.losses - b.losses;
@@ -106,6 +108,7 @@ function fullStats() {
     h2h: Object.values(stats.h2h)
       .map((x) => ({ a: x.aName, b: x.bName, aWins: x.aWins, bWins: x.bWins }))
       .sort((p, q) => (q.aWins + q.bWins) - (p.aWins + p.bWins)),
+    legends: [...stats.legends].sort((a, b) => (a.utc < b.utc ? 1 : -1)),
   };
 }
 
@@ -118,6 +121,7 @@ function broadcastStats() {
 
 function recordResult(room) {
   const winner = room.state.winner;
+  const lines = (room.state.winLines || []).length || 1;
   const humans = room.state.players
     .map((p, i) => ({ name: p.name, key: p.name.trim().toLowerCase(), i }))
     .filter((p) => !room.state.players[p.i].isBot && p.key); // bots never make the board
@@ -125,13 +129,25 @@ function recordResult(room) {
   humans.forEach((p) => {
     const won = p.i === winner;
     const s = stats.players[p.key]
-      || (stats.players[p.key] = { name: p.name, wins: 0, losses: 0, streak: 0, bestStreak: 0 });
+      || (stats.players[p.key] = { name: p.name, wins: 0, losses: 0, streak: 0, bestStreak: 0, legendary: 0 });
     s.name = p.name; // keep the latest capitalization
     if (won) s.wins++;
     else s.losses++;
     s.streak = won ? (s.streak || 0) + 1 : 0;
     s.bestStreak = Math.max(s.bestStreak || 0, s.streak);
+    if (won && lines >= 2) s.legendary = (s.legendary || 0) + 1;
   });
+
+  // A multi-line finish goes in the permanent book of legends — even a
+  // bot's (the family will want to remember the betrayal).
+  if (lines >= 2) {
+    const wp = room.state.players[winner];
+    const now = new Date();
+    stats.legends.push({
+      name: wp.name, lines, utc: now.toISOString(), central: centralTime(now),
+      code: room.code, isBot: !!wp.isBot,
+    });
+  }
 
   // Head-to-head: the winner logs a result against every other human.
   const w = humans.find((p) => p.i === winner);

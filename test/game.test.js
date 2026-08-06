@@ -197,6 +197,41 @@ for (let i = 0; i < 500; i++) {
   assert.equal(stolen, 1);
 }
 
+// --- multi-line wins (DOUBLE / TRIPLE / QUADRUPLE RINGO) ---
+{
+  // Center triple: row 2, column 2, and the main diagonal all one-away.
+  const s = fresh();
+  for (const [r, c] of [[2, 0], [2, 1], [2, 3], [2, 4],      // row 2
+                        [0, 2], [1, 2], [3, 2], [4, 2],      // column 2
+                        [0, 0], [1, 1], [3, 3], [4, 4]]) {   // main diagonal
+    s.board[r][c] = 0;
+  }
+  const { result } = applyPlace(s, 2, 2);
+  assert.equal(result, 'win', 'center completes multiple lines');
+  assert.equal(s.winLines.length, 3, 'TRIPLE RINGO: row + column + diagonal');
+  assert.deepEqual(s.winLine, s.winLines[0], 'winLine stays the first line');
+}
+{
+  // Corner quadruple: the only quad possible — row 0, column 0, the main
+  // diagonal, AND all four corners, completed by one ring at (0,0).
+  const s = fresh();
+  for (const [r, c] of [[0, 1], [0, 2], [0, 3], [0, 4],      // row 0
+                        [1, 0], [2, 0], [3, 0], [4, 0],      // column 0
+                        [1, 1], [2, 2], [3, 3], [4, 4]]) {   // diagonal (+ corner 4,4)
+    s.board[r][c] = 0;
+  }
+  const { result } = applyPlace(s, 0, 0);
+  assert.equal(result, 'win', 'corner completes multiple lines');
+  assert.equal(s.winLines.length, 4, 'QUADRUPLE RINGO: row + column + diagonal + corners');
+}
+{
+  // An ordinary single-line win still reports exactly one line.
+  const s = fresh();
+  for (let c = 0; c < 4; c++) s.board[0][c] = 0;
+  applyPlace(s, 0, 4);
+  assert.equal(s.winLines.length, 1, 'plain win is a single line');
+}
+
 // --- five players (Black is player index 4) ---
 {
   const s = newGame([{ name: 'A' }, { name: 'B' }, { name: 'C' }, { name: 'D' }, { name: 'E' }]);

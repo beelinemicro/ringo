@@ -64,6 +64,9 @@ Online play is built for phones and family patience:
 5. **Two ways to win**: five same-colored rings in a row — across, down, or
    diagonal — **or all four corners**. Shout **"RINGO!"** Thanks to stealing,
    a full board never ends the game — it just gets more cutthroat.
+6. A final ring that completes **two or more lines at once** is a **DOUBLE**
+   (or TRIPLE — or the corner-only, near-mythical **QUADRUPLE**) **RINGO**:
+   a legendary win, celebrated in gold and recorded forever in Family Stats.
 
 ## Tests
 
